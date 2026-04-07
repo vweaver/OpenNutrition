@@ -2,6 +2,7 @@
 	import '../app.css';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
+	import { base } from '$app/paths';
 	import { initDatabase, getDb, saveDatabase } from '$lib/db';
 	import { appState } from '$lib/stores/app.svelte';
 
@@ -36,30 +37,35 @@
 	const navItems = [
 		{
 			label: 'Dashboard',
-			href: '/',
+			href: `${base}/`,
+			match: '/',
 			icon: 'dashboard'
 		},
 		{
 			label: 'Weight',
-			href: '/weight',
+			href: `${base}/weight`,
+			match: '/weight',
 			icon: 'weight'
 		},
 		{
 			label: 'Foods',
-			href: '/foods',
+			href: `${base}/foods`,
+			match: '/foods',
 			icon: 'foods'
 		},
 		{
 			label: 'Settings',
-			href: '/settings',
+			href: `${base}/settings`,
+			match: '/settings',
 			icon: 'settings'
 		}
 	];
 
-	function isActive(href: string): boolean {
+	function isActive(match: string): boolean {
 		const pathname = page.url.pathname;
-		if (href === '/') return pathname === '/';
-		return pathname.startsWith(href);
+		const rel = pathname.replace(base, '') || '/';
+		if (match === '/') return rel === '/';
+		return rel.startsWith(match);
 	}
 </script>
 
@@ -82,7 +88,7 @@
 				{#each navItems as item}
 					<a
 						href={item.href}
-						class="flex flex-1 flex-col items-center justify-center gap-0.5 py-2 transition-colors {isActive(item.href)
+						class="flex flex-1 flex-col items-center justify-center gap-0.5 py-2 transition-colors {isActive(item.match)
 							? 'text-primary-600 dark:text-primary-400'
 							: 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}"
 					>

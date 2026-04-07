@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
+	import { base } from '$app/paths';
 	import { appState } from '$lib/stores/app.svelte';
 	import { llmState } from '$lib/stores/llm.svelte';
 	import { getFoods, createFood, createLogEntry, getRecentFoods, getFoodById } from '$lib/db/queries';
@@ -59,7 +60,7 @@
 			fat_g: Math.round(food.fat_g * qty * 10) / 10,
 			logged_at: new Date().toISOString().replace('T', ' ').substring(0, 19)
 		});
-		goto('/');
+		goto(`${base}/`);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -185,7 +186,7 @@
 			<p class="text-sm text-gray-500 dark:text-gray-400 capitalize">{mealType}</p>
 		</div>
 		<a
-			href="/"
+			href="{base}/"
 			class="rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
 		>
 			Cancel
