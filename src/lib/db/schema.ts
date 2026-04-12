@@ -4,7 +4,7 @@ CREATE TABLE IF NOT EXISTS user_profile (
   id TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
   name TEXT,
   age INTEGER,
-  sex TEXT CHECK(sex IN ('male', 'female', 'other')),
+  sex TEXT CHECK(sex IN ('male', 'female')),
   height_cm REAL,
   weight_kg REAL,
   activity_level TEXT CHECK(activity_level IN ('sedentary', 'light', 'moderate', 'active', 'very_active')),
