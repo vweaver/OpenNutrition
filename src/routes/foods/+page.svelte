@@ -1,15 +1,24 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { getFoods, createFood, deleteFood } from '$lib/db/queries';
+	import { llmState } from '$lib/stores/llm.svelte';
+	import { scanLabel } from '$lib/llm/client';
 	import type { Food } from '$lib/db/types';
 	import type { NutritionData } from '$lib/llm/types';
 	import NutritionForm from '$lib/components/NutritionForm.svelte';
+	import CameraCapture from '$lib/components/CameraCapture.svelte';
 
 	let foods = $state<Food[]>([]);
 	let searchQuery = $state('');
 	let expandedId = $state<string | null>(null);
 	let showAddForm = $state(false);
 	let saving = $state(false);
+
+	// Scan state
+	let showScan = $state(false);
+	let showCamera = $state(false);
+	let scanError = $state<string | null>(null);
+	let scanNullFields = $state<string[]>([]);
 
 	let filteredFoods = $derived.by(() => {
 		if (!searchQuery.trim()) return foods;
@@ -73,6 +82,27 @@
 		if (expandedId === id) expandedId = null;
 	}
 
+	async function handleCapture(base64: string) {
+		showCamera = false;
+		scanError = null;
+		if (!llmState.config.apiKey && llmState.config.provider !== 'ollama') {
+			scanError = 'Configure an LLM API key in Settings first.';
+			return;
+		}
+		llmState.scanning = true;
+		try {
+			const result = await scanLabel(llmState.config, base64);
+			scanNullFields = Object.entries(result)
+				.filter(([, v]) => v === null)
+				.map(([k]) => k);
+			newFoodData = result;
+		} catch (err) {
+			scanError = err instanceof Error ? err.message : 'Scan failed';
+		} finally {
+			llmState.scanning = false;
+		}
+	}
+
 	async function handleAddFood() {
 		if (!newFoodData.product_name?.trim()) {
 			alert('Please enter a food name.');
@@ -97,6 +127,7 @@
 			});
 			newFoodData = emptyNutritionData();
 			showAddForm = false;
+			showScan = false;
 			loadFoods();
 		} catch (err) {
 			console.error('Failed to create food:', err);
@@ -125,19 +156,72 @@
 </svelte:head>
 
 <div class="mx-auto max-w-2xl px-4 py-6 space-y-4">
-	<div class="flex items-center justify-between">
+	<div class="flex items-center justify-between gap-2 flex-wrap">
 		<h1 class="text-2xl font-bold text-gray-900 dark:text-white">My Foods</h1>
-		<button
-			type="button"
-			class={btnPrimary}
-			onclick={() => {
-				showAddForm = !showAddForm;
-				if (showAddForm) newFoodData = emptyNutritionData();
-			}}
-		>
-			{showAddForm ? 'Cancel' : '+ Add Food'}
-		</button>
+		<div class="flex gap-2">
+			<button
+				type="button"
+				class={btnSecondary}
+				onclick={() => {
+					showScan = !showScan;
+					showAddForm = false;
+					scanError = null;
+					if (showScan) {
+						newFoodData = emptyNutritionData();
+						showCamera = true;
+					}
+				}}
+			>
+				{showScan ? 'Cancel' : '📷 Scan Label'}
+			</button>
+			<button
+				type="button"
+				class={btnPrimary}
+				onclick={() => {
+					showAddForm = !showAddForm;
+					showScan = false;
+					if (showAddForm) newFoodData = emptyNutritionData();
+				}}
+			>
+				{showAddForm ? 'Cancel' : '+ Add Food'}
+			</button>
+		</div>
 	</div>
+
+	<!-- Scan Label Flow -->
+	{#if showScan}
+		<div class="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-gray-800 p-5 space-y-4">
+			<h2 class="text-lg font-semibold text-gray-900 dark:text-white">Scan Nutrition Label</h2>
+
+			{#if llmState.scanning}
+				<div class="flex flex-col items-center py-8 gap-3">
+					<div class="h-10 w-10 animate-spin rounded-full border-4 border-emerald-200 border-t-emerald-500"></div>
+					<p class="text-sm text-gray-500 dark:text-gray-400">Scanning nutrition label...</p>
+				</div>
+			{:else if showCamera}
+				<CameraCapture oncapture={handleCapture} onclose={() => { showCamera = false; showScan = false; }} />
+			{:else if newFoodData.calories > 0 || newFoodData.product_name}
+				<p class="text-xs text-gray-500 dark:text-gray-400">Review the extracted data and edit as needed. Yellow-highlighted fields were missing from the label.</p>
+				<NutritionForm bind:data={newFoodData} nullFields={scanNullFields} />
+				<div class="flex gap-3 pt-2">
+					<button type="button" class={btnPrimary} disabled={saving} onclick={handleAddFood}>
+						{saving ? 'Saving...' : 'Save Food'}
+					</button>
+					<button type="button" class={btnSecondary} onclick={() => { showCamera = true; newFoodData = emptyNutritionData(); }}>
+						Rescan
+					</button>
+				</div>
+			{:else}
+				<button type="button" class={btnPrimary} onclick={() => (showCamera = true)}>Open Camera</button>
+			{/if}
+
+			{#if scanError}
+				<div class="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3">
+					<p class="text-sm text-red-700 dark:text-red-300">{scanError}</p>
+				</div>
+			{/if}
+		</div>
+	{/if}
 
 	<!-- Add Food Form -->
 	{#if showAddForm}
