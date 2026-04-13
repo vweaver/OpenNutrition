@@ -1,5 +1,5 @@
 import type { LLMConfig, NutritionData } from './types';
-import { LABEL_SCAN_SYSTEM_PROMPT } from './prompts';
+import { LABEL_SCAN_SYSTEM_PROMPT, buildNaturalLanguagePrompt } from './prompts';
 
 /**
  * Resolve the chat completions endpoint URL for a given provider.
@@ -220,6 +220,89 @@ export async function scanLabel(config: LLMConfig, imageBase64: string): Promise
 		throw new Error(
 			`${config.provider} API returned ${response.status}: ${errorDetail}`
 		);
+	}
+
+	const responseBody = await response.json();
+	const text = extractResponseText(config.provider, responseBody);
+	return parseNutritionJSON(text);
+}
+
+/**
+ * Build a text-only request using the natural language description.
+ */
+function buildTextRequest(config: LLMConfig, description: string) {
+	const userPrompt = buildNaturalLanguagePrompt(description);
+
+	if (config.provider === 'anthropic') {
+		return {
+			url: getEndpoint(config),
+			headers: {
+				'Content-Type': 'application/json',
+				'x-api-key': config.apiKey,
+				'anthropic-version': '2023-06-01'
+			},
+			body: JSON.stringify({
+				model: config.model,
+				max_tokens: 4096,
+				system: LABEL_SCAN_SYSTEM_PROMPT,
+				messages: [{ role: 'user', content: userPrompt }]
+			})
+		};
+	}
+
+	const headers: Record<string, string> = {
+		'Content-Type': 'application/json',
+		Authorization: `Bearer ${config.apiKey}`
+	};
+	if (config.provider === 'openrouter') {
+		headers['HTTP-Referer'] = 'https://opennutrition.app';
+		headers['X-Title'] = 'OpenNutrition';
+	}
+
+	return {
+		url: getEndpoint(config),
+		headers,
+		body: JSON.stringify({
+			model: config.model,
+			messages: [
+				{ role: 'system', content: LABEL_SCAN_SYSTEM_PROMPT },
+				{ role: 'user', content: userPrompt }
+			],
+			max_tokens: 4096,
+			temperature: 0
+		})
+	};
+}
+
+/**
+ * Estimate nutrition for a plain-text food description.
+ *
+ * @param config - LLM provider configuration
+ * @param description - e.g. "four scrambled eggs with butter"
+ */
+export async function describeFood(config: LLMConfig, description: string): Promise<NutritionData> {
+	const request = buildTextRequest(config, description);
+
+	let response: Response;
+	try {
+		response = await fetch(request.url, {
+			method: 'POST',
+			headers: request.headers,
+			body: request.body
+		});
+	} catch (err) {
+		const message = err instanceof Error ? err.message : String(err);
+		throw new Error(`Network error connecting to ${config.provider}: ${message}`);
+	}
+
+	if (!response.ok) {
+		let errorDetail: string;
+		try {
+			errorDetail = (await response.text()).slice(0, 500);
+		} catch {
+			errorDetail = response.statusText;
+		}
+		throw new Error(`${config.provider} API returned ${response.status}: ${errorDetail}`);
 	}
 
 	const responseBody = await response.json();

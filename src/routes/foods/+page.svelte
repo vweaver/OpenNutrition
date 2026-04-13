@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { getFoods, createFood, deleteFood } from '$lib/db/queries';
 	import { llmState } from '$lib/stores/llm.svelte';
-	import { scanLabel } from '$lib/llm/client';
+	import { scanLabel, describeFood } from '$lib/llm/client';
 	import type { Food } from '$lib/db/types';
 	import type { NutritionData } from '$lib/llm/types';
 	import NutritionForm from '$lib/components/NutritionForm.svelte';
@@ -19,6 +19,13 @@
 	let showCamera = $state(false);
 	let scanError = $state<string | null>(null);
 	let scanNullFields = $state<string[]>([]);
+
+	// Describe state
+	let showDescribe = $state(false);
+	let description = $state('');
+	let describing = $state(false);
+	let describeError = $state<string | null>(null);
+	let describeResult = $state(false);
 
 	let filteredFoods = $derived.by(() => {
 		if (!searchQuery.trim()) return foods;
@@ -82,6 +89,28 @@
 		if (expandedId === id) expandedId = null;
 	}
 
+	async function handleDescribe() {
+		if (!description.trim()) return;
+		describeError = null;
+		if (!llmState.config.apiKey && llmState.config.provider !== 'ollama') {
+			describeError = 'Configure an LLM API key in Settings first.';
+			return;
+		}
+		describing = true;
+		try {
+			const result = await describeFood(llmState.config, description.trim());
+			scanNullFields = Object.entries(result)
+				.filter(([, v]) => v === null)
+				.map(([k]) => k);
+			newFoodData = result;
+			describeResult = true;
+		} catch (err) {
+			describeError = err instanceof Error ? err.message : 'Request failed';
+		} finally {
+			describing = false;
+		}
+	}
+
 	async function handleCapture(base64: string) {
 		showCamera = false;
 		scanError = null;
@@ -128,6 +157,9 @@
 			newFoodData = emptyNutritionData();
 			showAddForm = false;
 			showScan = false;
+			showDescribe = false;
+			description = '';
+			describeResult = false;
 			loadFoods();
 		} catch (err) {
 			console.error('Failed to create food:', err);
@@ -158,12 +190,30 @@
 <div class="mx-auto max-w-2xl px-4 py-6 space-y-4">
 	<div class="flex items-center justify-between gap-2 flex-wrap">
 		<h1 class="text-2xl font-bold text-gray-900 dark:text-white">My Foods</h1>
-		<div class="flex gap-2">
+		<div class="flex gap-2 flex-wrap">
+			<button
+				type="button"
+				class={btnSecondary}
+				onclick={() => {
+					showDescribe = !showDescribe;
+					showScan = false;
+					showAddForm = false;
+					describeError = null;
+					if (showDescribe) {
+						newFoodData = emptyNutritionData();
+						describeResult = false;
+						description = '';
+					}
+				}}
+			>
+				{showDescribe ? 'Cancel' : '✨ Describe'}
+			</button>
 			<button
 				type="button"
 				class={btnSecondary}
 				onclick={() => {
 					showScan = !showScan;
+					showDescribe = false;
 					showAddForm = false;
 					scanError = null;
 					if (showScan) {
@@ -180,6 +230,7 @@
 				onclick={() => {
 					showAddForm = !showAddForm;
 					showScan = false;
+					showDescribe = false;
 					if (showAddForm) newFoodData = emptyNutritionData();
 				}}
 			>
@@ -187,6 +238,58 @@
 			</button>
 		</div>
 	</div>
+
+	<!-- Describe Flow -->
+	{#if showDescribe}
+		<div class="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-gray-800 p-5 space-y-4">
+			<h2 class="text-lg font-semibold text-gray-900 dark:text-white">Describe a Food</h2>
+			<p class="text-xs text-gray-500 dark:text-gray-400">
+				Type a natural description. Examples: "four scrambled eggs with butter", "a medium banana", "1 cup cooked white rice".
+			</p>
+
+			<div class="flex gap-2">
+				<input
+					type="text"
+					bind:value={description}
+					placeholder="e.g. four scrambled eggs"
+					disabled={describing}
+					onkeydown={(e) => { if (e.key === 'Enter' && !describing) handleDescribe(); }}
+					class={inputClass}
+				/>
+				<button
+					type="button"
+					class={btnPrimary}
+					disabled={describing || !description.trim()}
+					onclick={handleDescribe}
+				>
+					{describing ? '...' : 'Estimate'}
+				</button>
+			</div>
+
+			{#if describing}
+				<div class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+					<div class="h-4 w-4 animate-spin rounded-full border-2 border-emerald-200 border-t-emerald-500"></div>
+					Estimating nutrition...
+				</div>
+			{/if}
+
+			{#if describeResult && !describing}
+				<p class="text-xs text-gray-500 dark:text-gray-400">Review the estimate and edit as needed. Yellow fields are unknown.</p>
+				<NutritionForm bind:data={newFoodData} nullFields={scanNullFields} />
+				<div class="flex gap-3 pt-2">
+					<button type="button" class={btnPrimary} disabled={saving} onclick={handleAddFood}>
+						{saving ? 'Saving...' : 'Save Food'}
+					</button>
+				</div>
+			{/if}
+
+			{#if describeError}
+				<div class="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3">
+					<p class="text-sm text-red-700 dark:text-red-300">{describeError}</p>
+				</div>
+			{/if}
+		</div>
+	{/if}
 
 	<!-- Scan Label Flow -->
 	{#if showScan}
