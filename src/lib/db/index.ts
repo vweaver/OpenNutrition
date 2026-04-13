@@ -30,6 +30,17 @@ export async function initDatabase(): Promise<Database> {
   // Run schema (all IF NOT EXISTS, so safe to run every time)
   db.run(SCHEMA);
 
+  // Migrations: add columns that may be missing on older databases
+  try {
+    const cols = db.exec("PRAGMA table_info(user_profile)");
+    const names = cols[0]?.values.map((r) => r[1] as string) ?? [];
+    if (!names.includes('unit_system')) {
+      db.run("ALTER TABLE user_profile ADD COLUMN unit_system TEXT DEFAULT 'metric'");
+    }
+  } catch (e) {
+    console.error('Migration check failed:', e);
+  }
+
   // Persist after initial schema creation
   await saveDatabase();
 

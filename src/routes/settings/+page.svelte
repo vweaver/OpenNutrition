@@ -150,19 +150,27 @@
 	}
 
 	function loadUnitSystem() {
+		const profile = getProfile();
+		if (profile?.unit_system === 'metric' || profile?.unit_system === 'imperial') {
+			appState.unitSystem = profile.unit_system;
+			return;
+		}
+		// One-time migration from old localStorage value, then remove it
 		try {
 			const stored = localStorage.getItem(UNIT_STORAGE_KEY);
 			if (stored === 'metric' || stored === 'imperial') {
 				appState.unitSystem = stored;
+				void upsertProfile({ unit_system: stored });
+				localStorage.removeItem(UNIT_STORAGE_KEY);
 			}
 		} catch {
 			// ignore
 		}
 	}
 
-	function setUnitSystem(system: 'metric' | 'imperial') {
+	async function setUnitSystem(system: 'metric' | 'imperial') {
 		appState.unitSystem = system;
-		localStorage.setItem(UNIT_STORAGE_KEY, system);
+		await upsertProfile({ unit_system: system });
 	}
 
 	async function exportSQLite() {

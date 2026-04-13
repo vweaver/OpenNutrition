@@ -24,10 +24,14 @@
 				await saveDatabase();
 			}
 
-			// Store the user ID
-			const userResult = db.exec('SELECT id FROM user_profile LIMIT 1');
+			// Store the user ID and load unit preference
+			const userResult = db.exec('SELECT id, unit_system FROM user_profile LIMIT 1');
 			if (userResult.length > 0 && userResult[0].values.length > 0) {
 				appState.userId = userResult[0].values[0][0] as string;
+				const unit = userResult[0].values[0][1] as string | null;
+				if (unit === 'metric' || unit === 'imperial') {
+					appState.unitSystem = unit;
+				}
 			}
 		} catch (err) {
 			console.error('Failed to initialize database:', err);

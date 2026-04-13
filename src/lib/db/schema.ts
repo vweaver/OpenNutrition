@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS user_profile (
   carb_target_g REAL,
   fat_target_g REAL,
   water_target_ml REAL DEFAULT 2500,
+  unit_system TEXT CHECK(unit_system IN ('metric', 'imperial')) DEFAULT 'metric',
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );

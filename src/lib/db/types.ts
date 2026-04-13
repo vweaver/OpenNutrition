@@ -12,6 +12,7 @@ export interface UserProfile {
   carb_target_g: number | null;
   fat_target_g: number | null;
   water_target_ml: number | null;
+  unit_system: string | null;
   created_at: string;
   updated_at: string;
 }
