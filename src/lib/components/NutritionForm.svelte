@@ -285,21 +285,6 @@
 					class="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm text-gray-900 dark:text-white placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 {isNullField('ingredients_text') ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-300 dark:border-amber-600' : ''}"
 				></textarea>
 			</div>
-			<div>
-				<label for="nf-allergens" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Allergens (comma-separated)</label>
-				<input
-					id="nf-allergens"
-					type="text"
-					value={data.allergens?.join(', ') ?? ''}
-					oninput={(e) => {
-						const target = e.target as HTMLInputElement;
-						const val = target.value.trim();
-						data.allergens = val ? val.split(',').map((s) => s.trim()) : null;
-					}}
-					placeholder="--"
-					class={fieldClass('allergens')}
-				/>
-			</div>
 		</div>
 	</section>
 </div>

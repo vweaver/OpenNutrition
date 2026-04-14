@@ -32,8 +32,7 @@ export const LABEL_SCAN_SYSTEM_PROMPT = `You are a nutrition data extraction eng
   "vitamin_a_mcg": number | null,
   "vitamin_c_mg": number | null,
   "barcode": string | null,
-  "ingredients_text": string | null,
-  "allergens": string[] | null
+  "ingredients_text": string | null
 }`;
 
 /**

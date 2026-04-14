@@ -77,8 +77,7 @@
 			vitamin_a_mcg: null,
 			vitamin_c_mg: null,
 			barcode: null,
-			ingredients_text: null,
-			allergens: null
+			ingredients_text: null
 		};
 	}
 

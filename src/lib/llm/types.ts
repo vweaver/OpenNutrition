@@ -36,7 +36,6 @@ export interface NutritionData {
 	vitamin_c_mg: number | null;
 	barcode: string | null;
 	ingredients_text: string | null;
-	allergens: string[] | null;
 }
 
 export interface LLMResponse {
