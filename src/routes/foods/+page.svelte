@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getFoods, createFood, deleteFood } from '$lib/db/queries';
+	import { getFoods, createFood, updateFood, deleteFood } from '$lib/db/queries';
 	import { llmState } from '$lib/stores/llm.svelte';
 	import { scanLabel, describeFood } from '$lib/llm/client';
 	import type { Food } from '$lib/db/types';
@@ -26,6 +26,14 @@
 	let describing = $state(false);
 	let describeError = $state<string | null>(null);
 	let describeResult = $state(false);
+
+	// Edit state
+	let editingId = $state<string | null>(null);
+	let editData = $state<NutritionData>(emptyNutritionData());
+	let editDescription = $state('');
+	let editReEstimating = $state(false);
+	let editError = $state<string | null>(null);
+	let editNullFields = $state<string[]>([]);
 
 	let filteredFoods = $derived.by(() => {
 		if (!searchQuery.trim()) return foods;
@@ -80,6 +88,97 @@
 
 	function toggleExpand(id: string) {
 		expandedId = expandedId === id ? null : id;
+	}
+
+	function foodToNutritionData(food: Food): NutritionData {
+		const d = emptyNutritionData();
+		d.product_name = food.name;
+		d.brand = food.brand ?? null;
+		d.serving_size_text = food.serving_unit || '';
+		d.serving_size_g = food.serving_size_g;
+		d.calories = food.calories;
+		d.protein_g = food.protein_g;
+		d.total_carbohydrate_g = food.carbs_g;
+		d.total_fat_g = food.fat_g;
+		d.dietary_fiber_g = food.fiber_g;
+		d.total_sugars_g = food.sugar_g;
+		d.sodium_mg = food.sodium_mg;
+		d.barcode = food.barcode ?? null;
+		return d;
+	}
+
+	function startEdit(food: Food) {
+		editingId = food.id;
+		editData = foodToNutritionData(food);
+		editNullFields = [];
+		editDescription = food.brand ? `${food.name} (${food.brand})` : food.name;
+		editError = null;
+		// Close other panels
+		showAddForm = false;
+		showScan = false;
+		showDescribe = false;
+	}
+
+	function cancelEdit() {
+		editingId = null;
+		editData = emptyNutritionData();
+		editDescription = '';
+		editError = null;
+	}
+
+	async function saveEdit() {
+		if (!editingId) return;
+		if (!editData.product_name?.trim()) {
+			editError = 'Food name is required.';
+			return;
+		}
+		saving = true;
+		try {
+			await updateFood(editingId, {
+				name: editData.product_name.trim(),
+				brand: editData.brand ?? null,
+				serving_size_g: editData.serving_size_g ?? 100,
+				serving_unit: editData.serving_size_text || 'g',
+				calories: editData.calories ?? 0,
+				protein_g: editData.protein_g ?? 0,
+				carbs_g: editData.total_carbohydrate_g ?? 0,
+				fat_g: editData.total_fat_g ?? 0,
+				fiber_g: editData.dietary_fiber_g ?? null,
+				sugar_g: editData.total_sugars_g ?? null,
+				sodium_mg: editData.sodium_mg ?? null,
+				barcode: editData.barcode ?? null
+			});
+			cancelEdit();
+			loadFoods();
+		} catch (err) {
+			editError = err instanceof Error ? err.message : 'Update failed';
+		} finally {
+			saving = false;
+		}
+	}
+
+	async function reEstimateEdit() {
+		if (!editDescription.trim()) {
+			editError = 'Enter a description to re-estimate.';
+			return;
+		}
+		if (!llmState.config.apiKey && llmState.config.provider !== 'ollama') {
+			editError = 'Configure an LLM API key in Settings first.';
+			return;
+		}
+		editError = null;
+		editReEstimating = true;
+		try {
+			const result = await describeFood(llmState.config, editDescription.trim());
+			editNullFields = Object.entries(result)
+				.filter(([, v]) => v === null)
+				.map(([k]) => k);
+			editData = result;
+		} catch (err) {
+			editError = err instanceof Error ? err.message : 'Re-estimate failed';
+		} finally {
+			editReEstimating = false;
+		}
 	}
 
 	async function handleDelete(id: string) {
@@ -457,11 +556,59 @@
 								&middot; Source: {food.source}
 							</div>
 
-							<div class="flex justify-end">
+							<div class="flex justify-end gap-2">
+								<button type="button" class={btnSecondary} onclick={() => startEdit(food)}>
+									Edit
+								</button>
 								<button type="button" class={btnDanger} onclick={() => handleDelete(food.id)}>
 									Delete
 								</button>
 							</div>
+
+							{#if editingId === food.id}
+								<div class="mt-4 border-t border-gray-200 dark:border-gray-700 pt-4 space-y-4">
+									<h3 class="text-sm font-semibold text-gray-900 dark:text-white">Edit Food</h3>
+
+									<!-- Re-estimate with AI -->
+									<div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-3 space-y-2">
+										<label class="text-xs font-medium text-gray-600 dark:text-gray-400">Re-estimate with AI (optional)</label>
+										<div class="flex gap-2">
+											<input
+												type="text"
+												bind:value={editDescription}
+												placeholder="e.g. four scrambled eggs"
+												disabled={editReEstimating}
+												class={inputClass}
+											/>
+											<button
+												type="button"
+												class={btnSecondary}
+												disabled={editReEstimating || !editDescription.trim()}
+												onclick={reEstimateEdit}
+											>
+												{editReEstimating ? '...' : '✨ Re-estimate'}
+											</button>
+										</div>
+									</div>
+
+									<NutritionForm bind:data={editData} nullFields={editNullFields} />
+
+									{#if editError}
+										<div class="rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 p-3">
+											<p class="text-sm text-red-700 dark:text-red-300">{editError}</p>
+										</div>
+									{/if}
+
+									<div class="flex gap-3">
+										<button type="button" class={btnPrimary} disabled={saving} onclick={saveEdit}>
+											{saving ? 'Saving...' : 'Save Changes'}
+										</button>
+										<button type="button" class={btnSecondary} onclick={cancelEdit}>
+											Cancel
+										</button>
+									</div>
+								</div>
+							{/if}
 						</div>
 					{/if}
 				</div>
