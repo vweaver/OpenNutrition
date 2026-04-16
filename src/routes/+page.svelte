@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { untrack } from 'svelte';
 	import { base } from '$app/paths';
 	import {
 		getLogByDate,
@@ -44,17 +45,25 @@
 	$effect(() => {
 		if (!appState.dbReady || !appState.userId) return;
 		const date = appState.selectedDate;
-		logEntries = getLogByDate(appState.userId, date);
+		const entries = getLogByDate(appState.userId, date);
+		logEntries = entries;
 		waterEntries = getWaterByDate(appState.userId, date);
-		// Look up names for any food_ids we haven't cached yet
-		const names: Record<string, string> = { ...foodNames };
-		for (const e of logEntries) {
-			if (!names[e.food_id]) {
-				const f = getFoodById(e.food_id);
-				if (f) names[e.food_id] = f.brand ? `${f.name} (${f.brand})` : f.name;
+		// Look up names for any food_ids we haven't cached yet. Use untrack
+		// so reading/writing foodNames doesn't re-trigger this effect.
+		untrack(() => {
+			const names = { ...foodNames };
+			let changed = false;
+			for (const e of entries) {
+				if (!names[e.food_id]) {
+					const f = getFoodById(e.food_id);
+					if (f) {
+						names[e.food_id] = f.brand ? `${f.name} (${f.brand})` : f.name;
+						changed = true;
+					}
+				}
 			}
-		}
-		foodNames = names;
+			if (changed) foodNames = names;
+		});
 	});
 
 	// ---------------------------------------------------------------------------
