@@ -22,12 +22,12 @@
 	function setNum(field: keyof NutritionData, e: Event) {
 		const input = e.target as HTMLInputElement;
 		const val = input.value === '' ? null : Number(input.value);
-		(data as Record<string, unknown>)[field] = val;
+		(data as unknown as Record<string, unknown>)[field] = val;
 	}
 
 	function setStr(field: keyof NutritionData, e: Event) {
 		const input = e.target as HTMLInputElement;
-		(data as Record<string, unknown>)[field] = input.value || null;
+		(data as unknown as Record<string, unknown>)[field] = input.value || null;
 	}
 
 	const inputBase =

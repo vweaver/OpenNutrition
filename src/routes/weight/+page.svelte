@@ -190,7 +190,9 @@
 						callbacks: {
 							label(ctx) {
 								const val = ctx.parsed.y;
-								return ` ${ctx.dataset.label}: ${val.toFixed(1)}`;
+								return val == null
+									? ` ${ctx.dataset.label}: —`
+									: ` ${ctx.dataset.label}: ${val.toFixed(1)}`;
 							}
 						}
 					}
