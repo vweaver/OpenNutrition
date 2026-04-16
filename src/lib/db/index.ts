@@ -33,7 +33,7 @@ export async function initDatabase(): Promise<Database> {
   // Migrations: add columns that may be missing on older databases
   try {
     const cols = db.exec("PRAGMA table_info(user_profile)");
-    const names = cols[0]?.values.map((r) => r[1] as string) ?? [];
+    const names = cols[0]?.values.map((r: unknown[]) => r[1] as string) ?? [];
     if (!names.includes('unit_system')) {
       db.run("ALTER TABLE user_profile ADD COLUMN unit_system TEXT DEFAULT 'metric'");
     }

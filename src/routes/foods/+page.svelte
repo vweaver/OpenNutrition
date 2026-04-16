@@ -572,7 +572,7 @@
 
 									<!-- Adjust with AI -->
 									<div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-3 space-y-2">
-										<label class="text-xs font-medium text-gray-600 dark:text-gray-400">Adjust with AI (optional)</label>
+										<p class="text-xs font-medium text-gray-600 dark:text-gray-400">Adjust with AI (optional)</p>
 										<p class="text-xs text-gray-500 dark:text-gray-500">The current values are sent as context. Tell the AI what to change.</p>
 										<div class="flex gap-2">
 											<input

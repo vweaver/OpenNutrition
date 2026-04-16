@@ -1,19 +1,23 @@
-import type { Food, FoodLog } from '$lib/db/types';
+import type { Food } from '$lib/db/types';
 
-const NUTRITION_FIELDS = [
-	'calories',
-	'protein_g',
-	'carbs_g',
-	'fat_g',
-	'fiber_g',
-	'sugar_g',
-	'sodium_mg'
-] as const;
+/**
+ * Minimum shape required for nutrition math. Both Food and FoodLog satisfy
+ * the core four fields; the extras (fiber/sugar/sodium) are only present
+ * on Food and are treated as optional everywhere else.
+ */
+export interface NutritionFields {
+	calories: number;
+	protein_g: number;
+	carbs_g: number;
+	fat_g: number;
+	fiber_g?: number | null;
+	sugar_g?: number | null;
+	sodium_mg?: number | null;
+}
 
-type NutritionFields = Pick<Food, (typeof NUTRITION_FIELDS)[number]>;
-
-export function scaleNutrition(food: NutritionFields, servings: number): NutritionFields {
+export function scaleNutrition(food: Food, servings: number): Food {
 	return {
+		...food,
 		calories: food.calories * servings,
 		protein_g: food.protein_g * servings,
 		carbs_g: food.carbs_g * servings,
