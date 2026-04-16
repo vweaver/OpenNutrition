@@ -45,3 +45,17 @@ export function buildNaturalLanguagePrompt(description: string): string {
 
 Food description: "${description}"`;
 }
+
+/**
+ * Build a prompt for revising an existing food entry. The LLM is given
+ * the current nutrition data plus a free-text adjustment instruction
+ * (e.g. "double the serving", "use whole milk instead of skim").
+ */
+export function buildRevisePrompt(current: unknown, instruction: string): string {
+	return `The user has an existing food entry and wants to adjust it. Below is the current nutrition data as JSON, followed by the user's adjustment instruction. Return an updated JSON object matching the same schema, applying the requested adjustments and recalculating any affected nutrient values. Preserve fields that are not affected by the change. If a field is unknown, leave it null.
+
+Current data:
+${JSON.stringify(current, null, 2)}
+
+Adjustment instruction: "${instruction}"`;
+}

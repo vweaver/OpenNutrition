@@ -1,5 +1,5 @@
 import type { LLMConfig, NutritionData } from './types';
-import { LABEL_SCAN_SYSTEM_PROMPT, buildNaturalLanguagePrompt } from './prompts';
+import { LABEL_SCAN_SYSTEM_PROMPT, buildNaturalLanguagePrompt, buildRevisePrompt } from './prompts';
 
 /**
  * Resolve the chat completions endpoint URL for a given provider.
@@ -228,11 +228,9 @@ export async function scanLabel(config: LLMConfig, imageBase64: string): Promise
 }
 
 /**
- * Build a text-only request using the natural language description.
+ * Build a text-only request with an arbitrary user prompt.
  */
-function buildTextRequest(config: LLMConfig, description: string) {
-	const userPrompt = buildNaturalLanguagePrompt(description);
-
+function buildTextRequest(config: LLMConfig, userPrompt: string) {
 	if (config.provider === 'anthropic') {
 		return {
 			url: getEndpoint(config),
@@ -281,7 +279,24 @@ function buildTextRequest(config: LLMConfig, description: string) {
  * @param description - e.g. "four scrambled eggs with butter"
  */
 export async function describeFood(config: LLMConfig, description: string): Promise<NutritionData> {
-	const request = buildTextRequest(config, description);
+	return runTextRequest(config, buildNaturalLanguagePrompt(description));
+}
+
+/**
+ * Revise an existing food entry. Sends the current nutrition data as
+ * context along with the user's adjustment instruction so the LLM can
+ * make targeted edits and recalculate dependent values.
+ */
+export async function reviseFood(
+	config: LLMConfig,
+	current: NutritionData,
+	instruction: string
+): Promise<NutritionData> {
+	return runTextRequest(config, buildRevisePrompt(current, instruction));
+}
+
+async function runTextRequest(config: LLMConfig, userPrompt: string): Promise<NutritionData> {
+	const request = buildTextRequest(config, userPrompt);
 
 	let response: Response;
 	try {

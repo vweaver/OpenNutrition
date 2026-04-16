@@ -2,7 +2,7 @@
 	import { onMount } from 'svelte';
 	import { getFoods, createFood, updateFood, deleteFood } from '$lib/db/queries';
 	import { llmState } from '$lib/stores/llm.svelte';
-	import { scanLabel, describeFood } from '$lib/llm/client';
+	import { scanLabel, describeFood, reviseFood } from '$lib/llm/client';
 	import type { Food } from '$lib/db/types';
 	import type { NutritionData } from '$lib/llm/types';
 	import NutritionForm from '$lib/components/NutritionForm.svelte';
@@ -110,7 +110,7 @@
 		editingId = food.id;
 		editData = foodToNutritionData(food);
 		editNullFields = [];
-		editDescription = food.brand ? `${food.name} (${food.brand})` : food.name;
+		editDescription = '';
 		editError = null;
 		// Close other panels
 		showAddForm = false;
@@ -158,7 +158,7 @@
 
 	async function reEstimateEdit() {
 		if (!editDescription.trim()) {
-			editError = 'Enter a description to re-estimate.';
+			editError = 'Enter an adjustment instruction.';
 			return;
 		}
 		if (!llmState.config.apiKey && llmState.config.provider !== 'ollama') {
@@ -168,7 +168,9 @@
 		editError = null;
 		editReEstimating = true;
 		try {
-			const result = await describeFood(llmState.config, editDescription.trim());
+			// Send current values + adjustment instruction so the LLM can make
+			// targeted edits instead of starting from scratch.
+			const result = await reviseFood(llmState.config, editData, editDescription.trim());
 			editNullFields = Object.entries(result)
 				.filter(([, v]) => v === null)
 				.map(([k]) => k);
@@ -568,14 +570,15 @@
 								<div class="mt-4 border-t border-gray-200 dark:border-gray-700 pt-4 space-y-4">
 									<h3 class="text-sm font-semibold text-gray-900 dark:text-white">Edit Food</h3>
 
-									<!-- Re-estimate with AI -->
+									<!-- Adjust with AI -->
 									<div class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 p-3 space-y-2">
-										<label class="text-xs font-medium text-gray-600 dark:text-gray-400">Re-estimate with AI (optional)</label>
+										<label class="text-xs font-medium text-gray-600 dark:text-gray-400">Adjust with AI (optional)</label>
+										<p class="text-xs text-gray-500 dark:text-gray-500">The current values are sent as context. Tell the AI what to change.</p>
 										<div class="flex gap-2">
 											<input
 												type="text"
 												bind:value={editDescription}
-												placeholder="e.g. four scrambled eggs"
+												placeholder="e.g. double the serving, use whole milk"
 												disabled={editReEstimating}
 												class={inputClass}
 											/>

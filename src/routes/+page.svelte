@@ -1,6 +1,15 @@
 <script lang="ts">
 	import { base } from '$app/paths';
-	import { getLogByDate, getProfile, getWaterByDate, addWater, deleteLogEntry, deleteWater } from '$lib/db/queries';
+	import {
+		getLogByDate,
+		getProfile,
+		getWaterByDate,
+		addWater,
+		deleteLogEntry,
+		deleteWater,
+		updateLogEntry,
+		getFoodById
+	} from '$lib/db/queries';
 	import { appState } from '$lib/stores/app.svelte';
 	import { formatDate, isToday, today } from '$lib/utils/dates';
 	import { sumNutrition, scaleNutrition } from '$lib/utils/nutrition';
@@ -13,9 +22,15 @@
 	let profile = $state<UserProfile | null>(null);
 	let logEntries = $state<FoodLog[]>([]);
 	let waterEntries = $state<WaterLog[]>([]);
+	let foodNames = $state<Record<string, string>>({});
 	let expandedMeals = $state<Record<string, boolean>>({ breakfast: true, lunch: true, dinner: true, snack: true });
 	let customWaterAmount = $state('');
 	let showCustomWater = $state(false);
+
+	// Edit log entry state
+	let editingEntryId = $state<string | null>(null);
+	let editServings = $state(1);
+	let editMeal = $state('breakfast');
 
 	// ---------------------------------------------------------------------------
 	// Load data reactively
@@ -31,6 +46,15 @@
 		const date = appState.selectedDate;
 		logEntries = getLogByDate(appState.userId, date);
 		waterEntries = getWaterByDate(appState.userId, date);
+		// Look up names for any food_ids we haven't cached yet
+		const names: Record<string, string> = { ...foodNames };
+		for (const e of logEntries) {
+			if (!names[e.food_id]) {
+				const f = getFoodById(e.food_id);
+				if (f) names[e.food_id] = f.brand ? `${f.name} (${f.brand})` : f.name;
+			}
+		}
+		foodNames = names;
 	});
 
 	// ---------------------------------------------------------------------------
@@ -114,6 +138,31 @@
 
 	async function handleDeleteEntry(id: string) {
 		await deleteLogEntry(id);
+		logEntries = getLogByDate(appState.userId, appState.selectedDate);
+	}
+
+	function startEditEntry(entry: FoodLog) {
+		editingEntryId = entry.id;
+		editServings = entry.serving_quantity;
+		editMeal = entry.meal_type;
+	}
+
+	function cancelEditEntry() {
+		editingEntryId = null;
+	}
+
+	async function saveEditEntry(entry: FoodLog) {
+		if (editServings <= 0) return;
+		const ratio = editServings / entry.serving_quantity;
+		await updateLogEntry(entry.id, {
+			serving_quantity: editServings,
+			meal_type: editMeal,
+			calories: entry.calories * ratio,
+			protein_g: entry.protein_g * ratio,
+			carbs_g: entry.carbs_g * ratio,
+			fat_g: entry.fat_g * ratio
+		});
+		editingEntryId = null;
 		logEntries = getLogByDate(appState.userId, appState.selectedDate);
 	}
 
@@ -325,24 +374,81 @@
 							<p class="px-4 py-3 text-sm text-gray-400 dark:text-gray-500 italic">No items logged</p>
 						{:else}
 							{#each entries as entry (entry.id)}
-								<div class="flex items-center justify-between px-4 py-2.5 border-b border-gray-50 dark:border-gray-700/50 last:border-b-0">
-									<div class="min-w-0 flex-1">
-										<p class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
-											{entry.food_id}
-										</p>
-										<p class="text-xs text-gray-500 dark:text-gray-400">
-											{entry.serving_quantity} {entry.serving_unit} &middot; {Math.round(entry.calories)} kcal
-										</p>
-									</div>
-									<button
-										onclick={() => handleDeleteEntry(entry.id)}
-										class="ml-2 shrink-0 rounded-full p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/30"
-										aria-label="Delete entry"
-									>
-										<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-											<path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-										</svg>
-									</button>
+								<div class="px-4 py-2.5 border-b border-gray-50 dark:border-gray-700/50 last:border-b-0">
+									{#if editingEntryId === entry.id}
+										<!-- Edit mode -->
+										<div class="space-y-2">
+											<p class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
+												{foodNames[entry.food_id] ?? 'Food'}
+											</p>
+											<div class="flex flex-wrap gap-2">
+												<label class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+													Servings
+													<input
+														type="number"
+														step="0.1"
+														min="0"
+														bind:value={editServings}
+														class="w-20 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1 text-sm text-gray-900 dark:text-white"
+													/>
+												</label>
+												<label class="flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+													Meal
+													<select bind:value={editMeal} class="rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1 text-sm text-gray-900 dark:text-white">
+														<option value="breakfast">Breakfast</option>
+														<option value="lunch">Lunch</option>
+														<option value="dinner">Dinner</option>
+														<option value="snack">Snack</option>
+													</select>
+												</label>
+											</div>
+											<div class="flex gap-2">
+												<button
+													onclick={() => saveEditEntry(entry)}
+													class="rounded bg-emerald-500 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-600"
+												>
+													Save
+												</button>
+												<button
+													onclick={cancelEditEntry}
+													class="rounded border border-gray-300 dark:border-gray-600 px-3 py-1 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
+												>
+													Cancel
+												</button>
+											</div>
+										</div>
+									{:else}
+										<div class="flex items-center justify-between">
+											<div class="min-w-0 flex-1">
+												<p class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
+													{foodNames[entry.food_id] ?? 'Food'}
+												</p>
+												<p class="text-xs text-gray-500 dark:text-gray-400">
+													{entry.serving_quantity} {entry.serving_unit} &middot; {Math.round(entry.calories)} kcal
+												</p>
+											</div>
+											<div class="ml-2 flex shrink-0 gap-1">
+												<button
+													onclick={() => startEditEntry(entry)}
+													class="rounded-full p-1.5 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+													aria-label="Edit entry"
+												>
+													<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+														<path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+													</svg>
+												</button>
+												<button
+													onclick={() => handleDeleteEntry(entry.id)}
+													class="rounded-full p-1.5 text-gray-400 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-900/30"
+													aria-label="Delete entry"
+												>
+													<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+														<path stroke-linecap="round" stroke-linejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+													</svg>
+												</button>
+											</div>
+										</div>
+									{/if}
 								</div>
 							{/each}
 						{/if}
