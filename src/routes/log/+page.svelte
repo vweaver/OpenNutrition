@@ -6,7 +6,7 @@
 	import { llmState } from '$lib/stores/llm.svelte';
 	import { getFoods, createFood, createLogEntry, getRecentFoods, getFoodById } from '$lib/db/queries';
 	import { scanLabel } from '$lib/llm/client';
-	import { today } from '$lib/utils/dates';
+	import { formatDate } from '$lib/utils/dates';
 	import type { Food } from '$lib/db/types';
 	import type { NutritionData } from '$lib/llm/types';
 	import NutritionForm from '$lib/components/NutritionForm.svelte';
@@ -58,7 +58,7 @@
 			protein_g: Math.round(food.protein_g * qty * 10) / 10,
 			carbs_g: Math.round(food.carbs_g * qty * 10) / 10,
 			fat_g: Math.round(food.fat_g * qty * 10) / 10,
-			logged_at: new Date().toISOString().replace('T', ' ').substring(0, 19)
+			logged_at: appState.selectedDate + ' 12:00:00'
 		});
 		goto(`${base}/`);
 	}
@@ -183,7 +183,7 @@
 	<div class="mb-6 flex items-center justify-between">
 		<div>
 			<h1 class="text-xl font-bold text-gray-900 dark:text-white">Log Food</h1>
-			<p class="text-sm text-gray-500 dark:text-gray-400 capitalize">{mealType}</p>
+			<p class="text-sm text-gray-500 dark:text-gray-400 capitalize">{mealType} &middot; {formatDate(appState.selectedDate)}</p>
 		</div>
 		<a
 			href="{base}/"
