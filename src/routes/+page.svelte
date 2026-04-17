@@ -464,7 +464,7 @@
 
 						<!-- Add Food button -->
 						<a
-							href="{base}/log?meal={meal}"
+							href="{base}/log?meal={meal}&date={appState.selectedDate}"
 							class="flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-emerald-600 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20"
 						>
 							<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
