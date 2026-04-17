@@ -14,8 +14,14 @@
 
 	type Tab = 'search' | 'scan' | 'quick' | 'recent';
 
-	// URL param
+	// URL params
 	let mealType = $derived(page.url.searchParams.get('meal') ?? 'snack');
+
+	// Sync date from URL param if present (covers full-page navigations)
+	const urlDate = page.url.searchParams.get('date');
+	if (urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
+		appState.selectedDate = urlDate;
+	}
 
 	// Tab state
 	let activeTab = $state<Tab>('search');
