@@ -178,17 +178,15 @@
 	}
 
 	// ---------------------------------------------------------------------------
-	// Recent tab — multi-select via long press
+	// Recent tab — tap to check, log button at bottom
 	// ---------------------------------------------------------------------------
 	let recentFoods = $state<Food[]>([]);
 	let lastServings = $state<Record<string, number>>({});
 	let recentChecked = $state<Record<string, number>>({});
 	let recentLogging = $state(false);
-	let pressTimer = $state<ReturnType<typeof setTimeout> | null>(null);
 
 	let recentCheckedIds = $derived(Object.keys(recentChecked));
 	let recentCheckedCount = $derived(recentCheckedIds.length);
-	let recentMultiMode = $derived(recentCheckedCount > 0);
 
 	$effect(() => {
 		if (activeTab === 'recent' && appState.userId) {
@@ -203,29 +201,6 @@
 			return sum + (food ? Math.round(food.calories * (recentChecked[id] ?? 1)) : 0);
 		}, 0)
 	);
-
-	function startLongPress(food: Food) {
-		pressTimer = setTimeout(() => {
-			toggleRecentCheck(food);
-			pressTimer = null;
-		}, 500);
-	}
-
-	function cancelLongPress() {
-		if (pressTimer) {
-			clearTimeout(pressTimer);
-			pressTimer = null;
-		}
-	}
-
-	function handleRecentTap(food: Food) {
-		cancelLongPress();
-		if (recentMultiMode) {
-			toggleRecentCheck(food);
-		} else {
-			logFood(food, lastServings[food.id] ?? 1);
-		}
-	}
 
 	function toggleRecentCheck(food: Food) {
 		if (food.id in recentChecked) {
@@ -506,39 +481,33 @@
 	<!-- Recent Tab -->
 	{#if activeTab === 'recent'}
 		<div class="space-y-3">
-			{#if recentMultiMode}
+			{#if recentCheckedCount > 0}
 				<div class="flex items-center justify-between">
 					<p class="text-sm text-gray-600 dark:text-gray-400">{recentCheckedCount} selected</p>
 					<button onclick={clearRecentSelection} class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">Clear</button>
 				</div>
 			{:else}
-				<p class="text-xs text-gray-500 dark:text-gray-400">Tap to log instantly. Long press to select multiple.</p>
+				<p class="text-xs text-gray-500 dark:text-gray-400">Tap items to select, then log them all at once.</p>
 			{/if}
 
 			{#if recentFoods.length > 0}
 				<ul class="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white dark:divide-gray-700 dark:border-gray-700 dark:bg-gray-800">
 					{#each recentFoods as food (food.id)}
 						{@const isChecked = food.id in recentChecked}
-						{@const qty = lastServings[food.id] ?? 1}
+						{@const qty = recentChecked[food.id] ?? lastServings[food.id] ?? 1}
 						<li>
 							<button
-								onpointerdown={() => startLongPress(food)}
-								onpointerup={() => handleRecentTap(food)}
-								onpointerleave={cancelLongPress}
-								oncontextmenu={(e) => e.preventDefault()}
+								onclick={() => toggleRecentCheck(food)}
 								class="flex w-full items-center justify-between px-4 py-3 text-left select-none transition-colors
 									{isChecked ? 'bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-gray-50 dark:hover:bg-gray-700'}"
 							>
 								<div class="flex items-center gap-3 min-w-0 flex-1">
-									{#if recentMultiMode}
-										<div class="shrink-0 h-5 w-5 rounded border-2 flex items-center justify-center transition-colors
-											{isChecked ? 'bg-emerald-500 border-emerald-500' : 'border-gray-300 dark:border-gray-600'}">
-											{#if isChecked}
-												<svg class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-													<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-												</svg>
-											{/if}
-										</div>
+									{#if isChecked}
+										<svg class="shrink-0 h-5 w-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+											<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+										</svg>
+									{:else}
+										<div class="shrink-0 h-5 w-5"></div>
 									{/if}
 									<div class="min-w-0">
 										<p class="text-sm font-medium text-gray-900 dark:text-white truncate">{food.name}</p>
@@ -559,22 +528,28 @@
 				<p class="py-12 text-center text-sm text-gray-400 dark:text-gray-500">No recent foods yet.</p>
 			{/if}
 
-			<!-- Multi-select footer -->
-			{#if recentMultiMode}
-				<div class="rounded-xl bg-emerald-600 p-3 shadow-lg">
+			<!-- Log button — always visible -->
+			<div class="rounded-xl bg-emerald-600 p-3 shadow-lg">
+				{#if recentCheckedCount > 0}
 					<div class="flex items-center justify-between text-white text-sm mb-2">
 						<span>{recentCheckedCount} item{recentCheckedCount === 1 ? '' : 's'}</span>
 						<span class="font-bold">{recentCalories} cal total</span>
 					</div>
-					<button
-						onclick={logAllRecent}
-						disabled={recentLogging}
-						class="w-full rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition-colors"
-					>
-						{recentLogging ? 'Logging...' : `Log ${recentCheckedCount} item${recentCheckedCount === 1 ? '' : 's'}`}
-					</button>
-				</div>
-			{/if}
+				{/if}
+				<button
+					onclick={logAllRecent}
+					disabled={recentLogging || recentCheckedCount === 0}
+					class="w-full rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+				>
+					{#if recentLogging}
+						Logging...
+					{:else if recentCheckedCount === 0}
+						Select foods to log
+					{:else}
+						Log {recentCheckedCount} item{recentCheckedCount === 1 ? '' : 's'}
+					{/if}
+				</button>
+			</div>
 		</div>
 	{/if}
 </div>
