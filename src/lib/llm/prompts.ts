@@ -1,13 +1,7 @@
-/**
- * System prompt for nutrition label scanning via vision model.
- * Copied from PRD section 2.3.2.
- */
-export const LABEL_SCAN_SYSTEM_PROMPT = `You are a nutrition data extraction engine. Given a photo of a nutrition facts label, extract ALL fields into the following JSON schema. If a field is not visible or not applicable, set it to null. Always return valid JSON and nothing else.
-
-{
+const NUTRITION_SCHEMA = `{
   "product_name": string | null,
   "brand": string | null,
-  "serving_size_text": string,        // e.g. "2/3 cup (55g)"
+  "serving_size_text": string,
   "serving_size_g": number | null,
   "serving_size_ml": number | null,
   "servings_per_container": number | null,
@@ -35,22 +29,29 @@ export const LABEL_SCAN_SYSTEM_PROMPT = `You are a nutrition data extraction eng
   "ingredients_text": string | null
 }`;
 
-/**
- * Build a prompt for natural language food description parsing.
- * The LLM should extract nutrition data from a free-text description
- * (e.g. "a large apple" or "two scrambled eggs with cheese").
- */
-export function buildNaturalLanguagePrompt(description: string): string {
-	return `The user described a food item they consumed. Based on your nutritional knowledge, estimate the nutrition facts for the following description and return the data as JSON matching the schema above. Use your best estimate for portion sizes and nutrient values. If you cannot estimate a field, set it to null.
+export const SYSTEM_PROMPT = `You are a nutrition estimation engine. Your job is to estimate or extract nutritional information for foods and return it as JSON.
 
-Food description: "${description}"`;
+You may receive:
+- A text description of a meal or food item (e.g. "four scrambled eggs with butter")
+- A photo of a nutrition facts label
+- A photo of food, a menu, a recipe, or a restaurant dish
+- A combination of text and a photo
+
+In all cases, estimate the nutritional values as accurately as possible and return valid JSON matching this schema. If a field cannot be determined, set it to null. Always return valid JSON and nothing else.
+
+${NUTRITION_SCHEMA}`;
+
+export function buildNaturalLanguagePrompt(description: string): string {
+	return `Estimate the nutrition facts for the following and return JSON matching the schema.\n\n"${description}"`;
 }
 
-/**
- * Build a prompt for revising an existing food entry. The LLM is given
- * the current nutrition data plus a free-text adjustment instruction
- * (e.g. "double the serving", "use whole milk instead of skim").
- */
+export function buildImagePrompt(description?: string): string {
+	if (description?.trim()) {
+		return `The user provided this image along with the following description: "${description.trim()}"\n\nExtract or estimate nutrition facts from the image and description. Return JSON matching the schema.`;
+	}
+	return 'Extract or estimate nutrition facts from this image. Return JSON matching the schema.';
+}
+
 export function buildRevisePrompt(current: unknown, instruction: string): string {
 	return `The user has an existing food entry and wants to adjust it. Below is the current nutrition data as JSON, followed by the user's adjustment instruction. Return an updated JSON object matching the same schema, applying the requested adjustments and recalculating any affected nutrient values. Preserve fields that are not affected by the change. If a field is unknown, leave it null.
 

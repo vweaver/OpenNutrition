@@ -1,5 +1,5 @@
 import type { LLMConfig, NutritionData } from './types';
-import { LABEL_SCAN_SYSTEM_PROMPT, buildNaturalLanguagePrompt, buildRevisePrompt } from './prompts';
+import { SYSTEM_PROMPT, buildNaturalLanguagePrompt, buildImagePrompt, buildRevisePrompt } from './prompts';
 
 /**
  * Resolve the chat completions endpoint URL for a given provider.
@@ -26,7 +26,7 @@ function getEndpoint(config: LLMConfig): string {
 /**
  * Build the request for Anthropic's Messages API format.
  */
-function buildAnthropicRequest(config: LLMConfig, imageBase64: string) {
+function buildAnthropicRequest(config: LLMConfig, imageBase64: string, userText?: string) {
 	const mediaType = detectMediaType(imageBase64);
 	// Strip the data URL prefix if present
 	const base64Data = imageBase64.replace(/^data:image\/[^;]+;base64,/, '');
@@ -41,7 +41,7 @@ function buildAnthropicRequest(config: LLMConfig, imageBase64: string) {
 		body: JSON.stringify({
 			model: config.model,
 			max_tokens: 4096,
-			system: LABEL_SCAN_SYSTEM_PROMPT,
+			system: SYSTEM_PROMPT,
 			messages: [
 				{
 					role: 'user',
@@ -56,7 +56,7 @@ function buildAnthropicRequest(config: LLMConfig, imageBase64: string) {
 						},
 						{
 							type: 'text',
-							text: 'Extract the nutrition data from this label.'
+							text: buildImagePrompt(userText)
 						}
 					]
 				}
@@ -69,7 +69,7 @@ function buildAnthropicRequest(config: LLMConfig, imageBase64: string) {
  * Build the request for OpenAI-compatible chat completions format.
  * Works for openrouter, ollama, and openai providers.
  */
-function buildOpenAICompatibleRequest(config: LLMConfig, imageBase64: string) {
+function buildOpenAICompatibleRequest(config: LLMConfig, imageBase64: string, userText?: string) {
 	// Ensure the image has a data URL prefix
 	const imageUrl = imageBase64.startsWith('data:')
 		? imageBase64
@@ -94,7 +94,7 @@ function buildOpenAICompatibleRequest(config: LLMConfig, imageBase64: string) {
 			messages: [
 				{
 					role: 'system',
-					content: LABEL_SCAN_SYSTEM_PROMPT
+					content: SYSTEM_PROMPT
 				},
 				{
 					role: 'user',
@@ -107,7 +107,7 @@ function buildOpenAICompatibleRequest(config: LLMConfig, imageBase64: string) {
 						},
 						{
 							type: 'text',
-							text: 'Extract the nutrition data from this label.'
+							text: buildImagePrompt(userText)
 						}
 					]
 				}
@@ -191,11 +191,11 @@ function parseNutritionJSON(text: string): NutritionData {
  * @param imageBase64 - Base64-encoded image, optionally with a data URL prefix
  * @returns Parsed NutritionData extracted from the label
  */
-export async function scanLabel(config: LLMConfig, imageBase64: string): Promise<NutritionData> {
+export async function scanLabel(config: LLMConfig, imageBase64: string, description?: string): Promise<NutritionData> {
 	const request =
 		config.provider === 'anthropic'
-			? buildAnthropicRequest(config, imageBase64)
-			: buildOpenAICompatibleRequest(config, imageBase64);
+			? buildAnthropicRequest(config, imageBase64, description)
+			: buildOpenAICompatibleRequest(config, imageBase64, description);
 
 	let response: Response;
 	try {
@@ -242,7 +242,7 @@ function buildTextRequest(config: LLMConfig, userPrompt: string) {
 			body: JSON.stringify({
 				model: config.model,
 				max_tokens: 4096,
-				system: LABEL_SCAN_SYSTEM_PROMPT,
+				system: SYSTEM_PROMPT,
 				messages: [{ role: 'user', content: userPrompt }]
 			})
 		};
@@ -263,7 +263,7 @@ function buildTextRequest(config: LLMConfig, userPrompt: string) {
 		body: JSON.stringify({
 			model: config.model,
 			messages: [
-				{ role: 'system', content: LABEL_SCAN_SYSTEM_PROMPT },
+				{ role: 'system', content: SYSTEM_PROMPT },
 				{ role: 'user', content: userPrompt }
 			],
 			max_tokens: 4096,

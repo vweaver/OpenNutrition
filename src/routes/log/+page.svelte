@@ -139,7 +139,7 @@
 		try {
 			let r: NutritionData;
 			if (aiPhoto) {
-				r = await scanLabel(llmState.config, aiPhoto);
+				r = await scanLabel(llmState.config, aiPhoto, aiText.trim() || undefined);
 			} else {
 				r = await describeFood(llmState.config, aiText.trim());
 			}
