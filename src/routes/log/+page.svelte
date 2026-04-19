@@ -27,8 +27,8 @@
 	}
 
 	// ── Shared state ────────────────────────────────────────────────────
-	type Tab = 'quick' | 'recent' | 'search' | 'scan';
-	let tab = $state<Tab>('quick');
+	type Tab = 'search' | 'quick' | 'recent' | 'scan';
+	let tab = $state<Tab>('search');
 
 	async function log(food: Food, qty: number, nav = true) {
 		await createLogEntry({
@@ -69,13 +69,12 @@
 	});
 
 	function qaToggle(food: Food) {
-		const copy = { ...qaSelected };
-		if (food.id in copy) {
-			delete copy[food.id];
+		if (food.id in qaSelected) {
+			const { [food.id]: _, ...rest } = qaSelected;
+			qaSelected = rest;
 		} else {
-			copy[food.id] = 1;
+			qaSelected = { ...qaSelected, [food.id]: 1 };
 		}
-		qaSelected = copy;
 	}
 
 	function qaSetQty(id: string, v: number) {
@@ -113,13 +112,12 @@
 	});
 
 	function rcToggle(food: Food) {
-		const copy = { ...rcSelected };
-		if (food.id in copy) {
-			delete copy[food.id];
+		if (food.id in rcSelected) {
+			const { [food.id]: _, ...rest } = rcSelected;
+			rcSelected = rest;
 		} else {
-			copy[food.id] = rcLast[food.id] ?? 1;
+			rcSelected = { ...rcSelected, [food.id]: rcLast[food.id] ?? 1 };
 		}
-		rcSelected = copy;
 	}
 
 	let rcIds = $derived(Object.keys(rcSelected));
@@ -197,10 +195,10 @@
 
 	// ── Tab config ──────────────────────────────────────────────────────
 	const tabs: { id: Tab; label: string }[] = [
-		{ id: 'quick', label: 'Quick Add' },
-		{ id: 'recent', label: 'Recent' },
 		{ id: 'search', label: 'Search' },
-		{ id: 'scan', label: 'Scan' }
+		{ id: 'scan', label: 'Scan' },
+		{ id: 'quick', label: 'Quick Add' },
+		{ id: 'recent', label: 'Recent' }
 	];
 
 	// ── Styles ──────────────────────────────────────────────────────────
