@@ -11,7 +11,7 @@
 		getRecentFoods,
 		getLastServings
 	} from '$lib/db/queries';
-	import { scanLabel } from '$lib/llm/client';
+	import { scanLabel, describeFood } from '$lib/llm/client';
 	import { formatDate } from '$lib/utils/dates';
 	import type { Food } from '$lib/db/types';
 	import type { NutritionData } from '$lib/llm/types';
@@ -99,18 +99,38 @@
 		}
 	});
 
-	// ── Scan ────────────────────────────────────────────────────────────
+	// ── AI tab (text + optional photo) ──────────────────────────────────
+	let aiText = $state('');
+	let aiPhoto = $state<string | null>(null);
 	let camOpen = $state(false);
 	let scanData = $state<NutritionData | null>(null);
 	let scanNulls = $state<string[]>([]);
 	let scanErr = $state<string | null>(null);
 
-	async function onCapture(b64: string) {
+	function onCapture(b64: string) {
+		aiPhoto = b64;
 		camOpen = false;
+	}
+
+	function removePhoto() {
+		aiPhoto = null;
+	}
+
+	async function aiSubmit() {
+		if (!aiText.trim() && !aiPhoto) return;
+		if (!llmState.config.apiKey && llmState.config.provider !== 'ollama') {
+			scanErr = 'Configure an LLM API key in Settings first.';
+			return;
+		}
 		llmState.scanning = true;
 		scanErr = null;
 		try {
-			const r = await scanLabel(llmState.config, b64);
+			let r: NutritionData;
+			if (aiPhoto) {
+				r = await scanLabel(llmState.config, aiPhoto);
+			} else {
+				r = await describeFood(llmState.config, aiText.trim());
+			}
 			scanNulls = Object.entries(r).filter(([, v]) => v === null).map(([k]) => k);
 			scanData = r;
 		} catch (e) {
@@ -143,7 +163,7 @@
 	// ── Tab config ──────────────────────────────────────────────────────
 	const tabs: { id: Tab; label: string }[] = [
 		{ id: 'search', label: 'Search' },
-		{ id: 'scan', label: 'Scan' },
+		{ id: 'scan', label: 'AI' },
 		{ id: 'recent', label: 'Recent' }
 	];
 
@@ -299,14 +319,14 @@
 	{/if}
 
 	<!-- ════════════════════════════════════════════════════════════════ -->
-	<!-- SCAN                                                           -->
+	<!-- AI                                                             -->
 	<!-- ════════════════════════════════════════════════════════════════ -->
 	{#if tab === 'scan'}
 		<div class="space-y-4">
 			{#if llmState.scanning}
 				<div class="flex flex-col items-center gap-3 py-16">
 					<div class="h-10 w-10 animate-spin rounded-full border-4 border-gray-200 border-t-emerald-600 dark:border-gray-700 dark:border-t-emerald-400"></div>
-					<p class="text-sm text-gray-500 dark:text-gray-400">Scanning nutrition label...</p>
+					<p class="text-sm text-gray-500 dark:text-gray-400">Analyzing...</p>
 				</div>
 			{:else if scanData}
 				<NutritionForm bind:data={scanData} nullFields={scanNulls} />
@@ -314,16 +334,47 @@
 			{:else if camOpen}
 				<CameraCapture oncapture={onCapture} onclose={() => { camOpen = false; }} />
 			{:else}
-				<div class="flex flex-col items-center gap-4 py-12">
-					<div class="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/30">
-						<svg class="h-8 w-8 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+				<p class="text-xs text-gray-500 dark:text-gray-400">Describe what you ate, or attach a photo of a nutrition label.</p>
+
+				<!-- Text input -->
+				<input
+					type="text"
+					bind:value={aiText}
+					placeholder="e.g. four scrambled eggs with butter"
+					onkeydown={(e) => { if (e.key === 'Enter') aiSubmit(); }}
+					class="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+				/>
+
+				<!-- Photo attachment -->
+				{#if aiPhoto}
+					<div class="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+						<img src={aiPhoto} alt="Attached photo" class="w-full max-h-48 object-cover" />
+						<button type="button" onclick={removePhoto} aria-label="Remove photo"
+							class="absolute top-2 right-2 rounded-full bg-black/50 p-1.5 text-white hover:bg-black/70 transition-colors">
+							<svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+								<path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+							</svg>
+						</button>
+					</div>
+				{/if}
+
+				<!-- Action buttons -->
+				<div class="flex gap-2">
+					<button type="button" onclick={() => { camOpen = true; }}
+						class="flex items-center gap-2 rounded-xl border border-gray-300 dark:border-gray-600 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+						<svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
 							<path stroke-linecap="round" stroke-linejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" />
 							<path stroke-linecap="round" stroke-linejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z" />
 						</svg>
-					</div>
-					<p class="text-sm text-gray-600 dark:text-gray-300">Take a photo of a nutrition label</p>
-					<button type="button" onclick={() => { camOpen = true; }} class="rounded-xl bg-emerald-600 px-6 py-3 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors">Open Camera</button>
+						{aiPhoto ? 'Retake' : 'Add Photo'}
+					</button>
+					<button type="button" onclick={aiSubmit}
+						disabled={!aiText.trim() && !aiPhoto}
+						class="flex-1 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
+						{aiPhoto ? 'Scan Label' : 'Estimate'}
+					</button>
 				</div>
+
 				{#if scanErr}
 					<div class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">{scanErr}</div>
 				{/if}
