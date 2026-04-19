@@ -4,7 +4,7 @@
 	import { base } from '$app/paths';
 	import { appState } from '$lib/stores/app.svelte';
 	import { llmState } from '$lib/stores/llm.svelte';
-	import { getFoods, createFood, createLogEntry, getRecentFoods, getFrequentFoods, getFoodById } from '$lib/db/queries';
+	import { getFoods, createFood, createLogEntry, getRecentFoods, getFrequentFoods, getLastServings, getFoodById } from '$lib/db/queries';
 	import { scanLabel } from '$lib/llm/client';
 	import { formatDate } from '$lib/utils/dates';
 	import type { Food } from '$lib/db/types';
@@ -178,26 +178,76 @@
 	}
 
 	// ---------------------------------------------------------------------------
-	// Recent tab
+	// Recent tab — multi-select via long press
 	// ---------------------------------------------------------------------------
 	let recentFoods = $state<Food[]>([]);
-	let selectedRecent = $state<Food | null>(null);
-	let recentServingQty = $state(1.0);
+	let lastServings = $state<Record<string, number>>({});
+	let recentChecked = $state<Record<string, number>>({});
+	let recentLogging = $state(false);
+	let pressTimer = $state<ReturnType<typeof setTimeout> | null>(null);
+
+	let recentCheckedIds = $derived(Object.keys(recentChecked));
+	let recentCheckedCount = $derived(recentCheckedIds.length);
+	let recentMultiMode = $derived(recentCheckedCount > 0);
 
 	$effect(() => {
 		if (activeTab === 'recent' && appState.userId) {
-			recentFoods = getRecentFoods(appState.userId, 20);
+			recentFoods = getRecentFoods(appState.userId, 30);
+			lastServings = getLastServings(appState.userId);
 		}
 	});
 
-	function selectRecent(food: Food) {
-		selectedRecent = food;
-		recentServingQty = 1.0;
+	let recentCalories = $derived(
+		recentCheckedIds.reduce((sum, id) => {
+			const food = recentFoods.find((f) => f.id === id);
+			return sum + (food ? Math.round(food.calories * (recentChecked[id] ?? 1)) : 0);
+		}, 0)
+	);
+
+	function startLongPress(food: Food) {
+		pressTimer = setTimeout(() => {
+			toggleRecentCheck(food);
+			pressTimer = null;
+		}, 500);
+	}
+
+	function cancelLongPress() {
+		if (pressTimer) {
+			clearTimeout(pressTimer);
+			pressTimer = null;
+		}
+	}
+
+	function handleRecentTap(food: Food) {
+		cancelLongPress();
+		if (recentMultiMode) {
+			toggleRecentCheck(food);
+		} else {
+			logFood(food, lastServings[food.id] ?? 1);
+		}
+	}
+
+	function toggleRecentCheck(food: Food) {
+		if (food.id in recentChecked) {
+			const { [food.id]: _, ...rest } = recentChecked;
+			recentChecked = rest;
+		} else {
+			recentChecked = { ...recentChecked, [food.id]: lastServings[food.id] ?? 1 };
+		}
+	}
+
+	async function logAllRecent() {
+		if (recentCheckedCount === 0) return;
+		recentLogging = true;
+		for (const id of recentCheckedIds) {
+			const food = recentFoods.find((f) => f.id === id);
+			if (food) await logFood(food, recentChecked[id] ?? 1, false);
+		}
+		goto(`${base}/`);
 	}
 
 	function clearRecentSelection() {
-		selectedRecent = null;
-		recentServingQty = 1.0;
+		recentChecked = {};
 	}
 
 	// Tab definitions
@@ -455,80 +505,73 @@
 
 	<!-- Recent Tab -->
 	{#if activeTab === 'recent'}
-		<div class="space-y-4">
-			{#if !selectedRecent}
-				{#if recentFoods.length > 0}
-					<ul class="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white dark:divide-gray-700 dark:border-gray-700 dark:bg-gray-800">
-						{#each recentFoods as food}
-							<li>
-								<button
-									onclick={() => selectRecent(food)}
-									class="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-								>
-									<div>
-										<p class="text-sm font-medium text-gray-900 dark:text-white">{food.name}</p>
+		<div class="space-y-3">
+			{#if recentMultiMode}
+				<div class="flex items-center justify-between">
+					<p class="text-sm text-gray-600 dark:text-gray-400">{recentCheckedCount} selected</p>
+					<button onclick={clearRecentSelection} class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">Clear</button>
+				</div>
+			{:else}
+				<p class="text-xs text-gray-500 dark:text-gray-400">Tap to log instantly. Long press to select multiple.</p>
+			{/if}
+
+			{#if recentFoods.length > 0}
+				<ul class="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white dark:divide-gray-700 dark:border-gray-700 dark:bg-gray-800">
+					{#each recentFoods as food (food.id)}
+						{@const isChecked = food.id in recentChecked}
+						{@const qty = lastServings[food.id] ?? 1}
+						<li>
+							<button
+								onpointerdown={() => startLongPress(food)}
+								onpointerup={() => handleRecentTap(food)}
+								onpointerleave={cancelLongPress}
+								oncontextmenu={(e) => e.preventDefault()}
+								class="flex w-full items-center justify-between px-4 py-3 text-left select-none transition-colors
+									{isChecked ? 'bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-gray-50 dark:hover:bg-gray-700'}"
+							>
+								<div class="flex items-center gap-3 min-w-0 flex-1">
+									{#if recentMultiMode}
+										<div class="shrink-0 h-5 w-5 rounded border-2 flex items-center justify-center transition-colors
+											{isChecked ? 'bg-emerald-500 border-emerald-500' : 'border-gray-300 dark:border-gray-600'}">
+											{#if isChecked}
+												<svg class="h-3 w-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+													<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
+												</svg>
+											{/if}
+										</div>
+									{/if}
+									<div class="min-w-0">
+										<p class="text-sm font-medium text-gray-900 dark:text-white truncate">{food.name}</p>
 										{#if food.brand}
-											<p class="text-xs text-gray-500 dark:text-gray-400">{food.brand}</p>
+											<p class="text-xs text-gray-500 dark:text-gray-400 truncate">{food.brand}</p>
 										{/if}
 									</div>
-									<span class="text-xs text-gray-400 dark:text-gray-500">{food.calories} cal</span>
-								</button>
-							</li>
-						{/each}
-					</ul>
-				{:else}
-					<p class="py-12 text-center text-sm text-gray-400 dark:text-gray-500">No recent foods yet.</p>
-				{/if}
+								</div>
+								<div class="shrink-0 text-right ml-2">
+									<span class="text-xs text-gray-400 dark:text-gray-500">{Math.round(food.calories * qty)} cal</span>
+									<p class="text-xs text-gray-400 dark:text-gray-500">{qty} serving{qty !== 1 ? 's' : ''}</p>
+								</div>
+							</button>
+						</li>
+					{/each}
+				</ul>
 			{:else}
-				<!-- Serving selector for recent food -->
-				<div class="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
-					<div class="mb-4 flex items-center justify-between">
-						<div>
-							<p class="font-medium text-gray-900 dark:text-white">{selectedRecent.name}</p>
-							{#if selectedRecent.brand}
-								<p class="text-sm text-gray-500 dark:text-gray-400">{selectedRecent.brand}</p>
-							{/if}
-						</div>
-						<button onclick={clearRecentSelection} class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-							Change
-						</button>
-					</div>
-					<div class="mb-4">
-						<label for="recent-serving" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-							Servings ({selectedRecent.serving_unit})
-						</label>
-						<input
-							id="recent-serving"
-							type="number"
-							step="0.1"
-							min="0.1"
-							bind:value={recentServingQty}
-							class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-						/>
-					</div>
-					<div class="mb-4 grid grid-cols-4 gap-2 text-center text-xs text-gray-500 dark:text-gray-400">
-						<div>
-							<p class="text-lg font-bold text-gray-900 dark:text-white">{Math.round(selectedRecent.calories * recentServingQty)}</p>
-							<p>cal</p>
-						</div>
-						<div>
-							<p class="text-lg font-bold text-gray-900 dark:text-white">{(selectedRecent.protein_g * recentServingQty).toFixed(1)}</p>
-							<p>protein</p>
-						</div>
-						<div>
-							<p class="text-lg font-bold text-gray-900 dark:text-white">{(selectedRecent.carbs_g * recentServingQty).toFixed(1)}</p>
-							<p>carbs</p>
-						</div>
-						<div>
-							<p class="text-lg font-bold text-gray-900 dark:text-white">{(selectedRecent.fat_g * recentServingQty).toFixed(1)}</p>
-							<p>fat</p>
-						</div>
+				<p class="py-12 text-center text-sm text-gray-400 dark:text-gray-500">No recent foods yet.</p>
+			{/if}
+
+			<!-- Multi-select footer -->
+			{#if recentMultiMode}
+				<div class="rounded-xl bg-emerald-600 p-3 shadow-lg">
+					<div class="flex items-center justify-between text-white text-sm mb-2">
+						<span>{recentCheckedCount} item{recentCheckedCount === 1 ? '' : 's'}</span>
+						<span class="font-bold">{recentCalories} cal total</span>
 					</div>
 					<button
-						onclick={() => logFood(selectedRecent!, recentServingQty)}
-						class="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors"
+						onclick={logAllRecent}
+						disabled={recentLogging}
+						class="w-full rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition-colors"
 					>
-						Log
+						{recentLogging ? 'Logging...' : `Log ${recentCheckedCount} item${recentCheckedCount === 1 ? '' : 's'}`}
 					</button>
 				</div>
 			{/if}

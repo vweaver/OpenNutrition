@@ -255,6 +255,24 @@ export function getFrequentFoods(userId: string, limit = 10): Food[] {
   );
 }
 
+export function getLastServings(userId: string): Record<string, number> {
+  const rows = queryAll<{ food_id: string; serving_quantity: number }>(
+    `SELECT food_id, serving_quantity FROM food_log
+     WHERE user_id = ? AND is_deleted = 0
+     AND id IN (
+       SELECT id FROM food_log fl2
+       WHERE fl2.food_id = food_log.food_id AND fl2.user_id = ? AND fl2.is_deleted = 0
+       ORDER BY fl2.logged_at DESC LIMIT 1
+     )`,
+    [userId, userId]
+  );
+  const map: Record<string, number> = {};
+  for (const r of rows) {
+    map[r.food_id] = r.serving_quantity;
+  }
+  return map;
+}
+
 // ---------------------------------------------------------------------------
 // WeightLog
 // ---------------------------------------------------------------------------
