@@ -4,7 +4,7 @@
 	import { base } from '$app/paths';
 	import { appState } from '$lib/stores/app.svelte';
 	import { llmState } from '$lib/stores/llm.svelte';
-	import { getFoods, createFood, createLogEntry, getRecentFoods, getFoodById } from '$lib/db/queries';
+	import { getFoods, createFood, createLogEntry, getRecentFoods, getFrequentFoods, getFoodById } from '$lib/db/queries';
 	import { scanLabel } from '$lib/llm/client';
 	import { formatDate } from '$lib/utils/dates';
 	import type { Food } from '$lib/db/types';
@@ -52,7 +52,7 @@
 		servingQty = 1.0;
 	}
 
-	async function logFood(food: Food, qty: number) {
+	async function logFood(food: Food, qty: number, navigate = true) {
 		await createLogEntry({
 			user_id: appState.userId,
 			food_id: food.id,
@@ -66,7 +66,7 @@
 			fat_g: Math.round(food.fat_g * qty * 10) / 10,
 			logged_at: appState.selectedDate + ' 12:00:00'
 		});
-		goto(`${base}/`);
+		if (navigate) goto(`${base}/`);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -122,34 +122,61 @@
 	}
 
 	// ---------------------------------------------------------------------------
-	// Quick Add tab
+	// Quick Add tab — multi-select from food library
 	// ---------------------------------------------------------------------------
-	let quickName = $state('');
-	let quickCalories = $state<number | null>(null);
-	let quickProtein = $state<number | null>(null);
-	let quickCarbs = $state<number | null>(null);
-	let quickFat = $state<number | null>(null);
+	let quickSearch = $state('');
+	let quickFoods = $state<Food[]>([]);
+	let checkedFoods = $state<Map<string, number>>(new Map());
+	let loggingAll = $state(false);
 
-	async function logQuickAdd() {
-		if (!quickName || quickCalories === null) return;
+	$effect(() => {
+		if (activeTab !== 'quick') return;
+		if (quickSearch.length >= 1) {
+			quickFoods = getFoods(quickSearch);
+		} else if (appState.userId) {
+			const recent = getRecentFoods(appState.userId, 30);
+			const recentIds = new Set(recent.map((f) => f.id));
+			const frequent = getFrequentFoods(appState.userId, 20).filter((f) => !recentIds.has(f.id));
+			quickFoods = [...recent, ...frequent];
+			if (quickFoods.length === 0) quickFoods = getFoods();
+		} else {
+			quickFoods = getFoods();
+		}
+	});
 
-		const food = await createFood({
-			name: quickName,
-			brand: null,
-			serving_size_g: 100,
-			serving_unit: 'serving',
-			calories: quickCalories,
-			protein_g: quickProtein ?? 0,
-			carbs_g: quickCarbs ?? 0,
-			fat_g: quickFat ?? 0,
-			fiber_g: null,
-			sugar_g: null,
-			sodium_mg: null,
-			barcode: null,
-			source: 'manual'
-		});
+	function toggleCheck(food: Food) {
+		const map = new Map(checkedFoods);
+		if (map.has(food.id)) {
+			map.delete(food.id);
+		} else {
+			map.set(food.id, 1);
+		}
+		checkedFoods = map;
+	}
 
-		await logFood(food, 1.0);
+	function setCheckServings(foodId: string, qty: number) {
+		const map = new Map(checkedFoods);
+		map.set(foodId, Math.max(0.1, qty));
+		checkedFoods = map;
+	}
+
+	let checkedTotal = $derived(() => {
+		let cal = 0;
+		for (const [id, qty] of checkedFoods) {
+			const food = quickFoods.find((f) => f.id === id);
+			if (food) cal += Math.round(food.calories * qty);
+		}
+		return { count: checkedFoods.size, calories: cal };
+	});
+
+	async function logAllChecked() {
+		if (checkedFoods.size === 0) return;
+		loggingAll = true;
+		for (const [id, qty] of checkedFoods) {
+			const food = quickFoods.find((f) => f.id === id);
+			if (food) await logFood(food, qty, false);
+		}
+		goto(`${base}/`);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -347,71 +374,78 @@
 		</div>
 	{/if}
 
-	<!-- Quick Add Tab -->
+	<!-- Quick Add Tab — multi-select checklist -->
 	{#if activeTab === 'quick'}
-		<div class="space-y-4">
-			<div>
-				<label for="quick-name" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Food Name</label>
-				<input
-					id="quick-name"
-					type="text"
-					bind:value={quickName}
-					placeholder="e.g. Banana, Coffee with milk..."
-					class="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-				/>
-			</div>
-			<div>
-				<label for="quick-cal" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Calories</label>
-				<input
-					id="quick-cal"
-					type="number"
-					bind:value={quickCalories}
-					placeholder="0"
-					class="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-lg font-bold text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-				/>
-			</div>
-			<div class="grid grid-cols-3 gap-3">
-				<div>
-					<label for="quick-protein" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Protein (g)</label>
-					<input
-						id="quick-protein"
-						type="number"
-						step="0.1"
-						bind:value={quickProtein}
-						placeholder="0"
-						class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-					/>
+		<div class="space-y-3">
+			<!-- Search within quick add -->
+			<input
+				type="text"
+				bind:value={quickSearch}
+				placeholder="Filter foods..."
+				class="w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
+			/>
+
+			{#if quickFoods.length === 0}
+				<p class="py-8 text-center text-sm text-gray-400 dark:text-gray-500">
+					No foods in your library yet. Add some via the Foods tab.
+				</p>
+			{:else}
+				<div class="max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 divide-y divide-gray-100 dark:divide-gray-700">
+					{#each quickFoods as food (food.id)}
+						{@const isChecked = checkedFoods.has(food.id)}
+						<label class="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-750 cursor-pointer transition-colors {isChecked ? 'bg-emerald-50 dark:bg-emerald-900/20' : ''}">
+							<input
+								type="checkbox"
+								checked={isChecked}
+								onchange={() => toggleCheck(food)}
+								class="h-5 w-5 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500"
+							/>
+							<div class="flex-1 min-w-0">
+								<p class="text-sm font-medium text-gray-900 dark:text-white truncate">{food.name}</p>
+								{#if food.brand}
+									<p class="text-xs text-gray-500 dark:text-gray-400 truncate">{food.brand}</p>
+								{/if}
+							</div>
+							<span class="shrink-0 text-xs text-gray-400 dark:text-gray-500">{food.calories} cal</span>
+						</label>
+						{#if isChecked}
+							<div class="flex items-center gap-2 px-4 py-2 bg-emerald-50/50 dark:bg-emerald-900/10">
+								<label class="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-400">
+									Servings
+									<input
+										type="number"
+										step="0.1"
+										min="0.1"
+										value={checkedFoods.get(food.id) ?? 1}
+										oninput={(e) => setCheckServings(food.id, Number((e.target as HTMLInputElement).value))}
+										class="w-16 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1 text-sm text-gray-900 dark:text-white"
+									/>
+								</label>
+								<span class="text-xs text-gray-500 dark:text-gray-400">
+									= {Math.round(food.calories * (checkedFoods.get(food.id) ?? 1))} cal
+								</span>
+							</div>
+						{/if}
+					{/each}
 				</div>
-				<div>
-					<label for="quick-carbs" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Carbs (g)</label>
-					<input
-						id="quick-carbs"
-						type="number"
-						step="0.1"
-						bind:value={quickCarbs}
-						placeholder="0"
-						class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-					/>
+			{/if}
+
+			<!-- Sticky footer with total + log button -->
+			{#if checkedFoods.size > 0}
+				<div class="sticky bottom-0 rounded-xl bg-emerald-600 p-3 shadow-lg">
+					<div class="flex items-center justify-between text-white text-sm mb-2">
+						<span>{checkedTotal().count} item{checkedTotal().count === 1 ? '' : 's'} selected</span>
+						<span class="font-bold">{checkedTotal().calories} cal total</span>
+					</div>
+					<button
+						onclick={logAllChecked}
+						disabled={loggingAll}
+						class="w-full rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition-colors"
+					>
+						{loggingAll ? 'Logging...' : `Log ${checkedTotal().count} item${checkedTotal().count === 1 ? '' : 's'}`}
+					</button>
 				</div>
-				<div>
-					<label for="quick-fat" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Fat (g)</label>
-					<input
-						id="quick-fat"
-						type="number"
-						step="0.1"
-						bind:value={quickFat}
-						placeholder="0"
-						class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-700 dark:text-white"
-					/>
-				</div>
-			</div>
-			<button
-				onclick={logQuickAdd}
-				disabled={!quickName || quickCalories === null}
-				class="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-			>
-				Log
-			</button>
+			{/if}
 		</div>
 	{/if}
 
