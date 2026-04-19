@@ -126,7 +126,7 @@
 	// ---------------------------------------------------------------------------
 	let quickSearch = $state('');
 	let quickFoods = $state<Food[]>([]);
-	let checkedFoods = $state<Map<string, number>>(new Map());
+	let checkedFoods = $state<Record<string, number>>({});
 	let loggingAll = $state(false);
 
 	$effect(() => {
@@ -144,37 +144,35 @@
 		}
 	});
 
+	let checkedIds = $derived(Object.keys(checkedFoods));
+	let checkedCount = $derived(checkedIds.length);
+
 	function toggleCheck(food: Food) {
-		const map = new Map(checkedFoods);
-		if (map.has(food.id)) {
-			map.delete(food.id);
+		if (food.id in checkedFoods) {
+			const { [food.id]: _, ...rest } = checkedFoods;
+			checkedFoods = rest;
 		} else {
-			map.set(food.id, 1);
+			checkedFoods = { ...checkedFoods, [food.id]: 1 };
 		}
-		checkedFoods = map;
 	}
 
 	function setCheckServings(foodId: string, qty: number) {
-		const map = new Map(checkedFoods);
-		map.set(foodId, Math.max(0.1, qty));
-		checkedFoods = map;
+		checkedFoods = { ...checkedFoods, [foodId]: Math.max(0.1, qty) };
 	}
 
-	let checkedTotal = $derived(() => {
-		let cal = 0;
-		for (const [id, qty] of checkedFoods) {
+	let checkedCalories = $derived(
+		checkedIds.reduce((sum, id) => {
 			const food = quickFoods.find((f) => f.id === id);
-			if (food) cal += Math.round(food.calories * qty);
-		}
-		return { count: checkedFoods.size, calories: cal };
-	});
+			return sum + (food ? Math.round(food.calories * (checkedFoods[id] ?? 1)) : 0);
+		}, 0)
+	);
 
 	async function logAllChecked() {
-		if (checkedFoods.size === 0) return;
+		if (checkedCount === 0) return;
 		loggingAll = true;
-		for (const [id, qty] of checkedFoods) {
+		for (const id of checkedIds) {
 			const food = quickFoods.find((f) => f.id === id);
-			if (food) await logFood(food, qty, false);
+			if (food) await logFood(food, checkedFoods[id] ?? 1, false);
 		}
 		goto(`${base}/`);
 	}
@@ -392,7 +390,7 @@
 			{:else}
 				<div class="max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800 divide-y divide-gray-100 dark:divide-gray-700">
 					{#each quickFoods as food (food.id)}
-						{@const isChecked = checkedFoods.has(food.id)}
+						{@const isChecked = food.id in checkedFoods}
 						<label class="flex items-center gap-3 px-4 py-2.5 hover:bg-gray-50 dark:hover:bg-gray-750 cursor-pointer transition-colors {isChecked ? 'bg-emerald-50 dark:bg-emerald-900/20' : ''}">
 							<input
 								type="checkbox"
@@ -416,13 +414,13 @@
 										type="number"
 										step="0.1"
 										min="0.1"
-										value={checkedFoods.get(food.id) ?? 1}
+										value={checkedFoods[food.id] ?? 1}
 										oninput={(e) => setCheckServings(food.id, Number((e.target as HTMLInputElement).value))}
 										class="w-16 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1 text-sm text-gray-900 dark:text-white"
 									/>
 								</label>
 								<span class="text-xs text-gray-500 dark:text-gray-400">
-									= {Math.round(food.calories * (checkedFoods.get(food.id) ?? 1))} cal
+									= {Math.round(food.calories * (checkedFoods[food.id] ?? 1))} cal
 								</span>
 							</div>
 						{/if}
@@ -430,22 +428,28 @@
 				</div>
 			{/if}
 
-			<!-- Sticky footer with total + log button -->
-			{#if checkedFoods.size > 0}
-				<div class="sticky bottom-0 rounded-xl bg-emerald-600 p-3 shadow-lg">
+			<!-- Log button — always visible -->
+			<div class="rounded-xl bg-emerald-600 p-3 shadow-lg">
+				{#if checkedCount > 0}
 					<div class="flex items-center justify-between text-white text-sm mb-2">
-						<span>{checkedTotal().count} item{checkedTotal().count === 1 ? '' : 's'} selected</span>
-						<span class="font-bold">{checkedTotal().calories} cal total</span>
+						<span>{checkedCount} item{checkedCount === 1 ? '' : 's'} selected</span>
+						<span class="font-bold">{checkedCalories} cal total</span>
 					</div>
-					<button
-						onclick={logAllChecked}
-						disabled={loggingAll}
-						class="w-full rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 transition-colors"
-					>
-						{loggingAll ? 'Logging...' : `Log ${checkedTotal().count} item${checkedTotal().count === 1 ? '' : 's'}`}
-					</button>
-				</div>
-			{/if}
+				{/if}
+				<button
+					onclick={logAllChecked}
+					disabled={loggingAll || checkedCount === 0}
+					class="w-full rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+				>
+					{#if loggingAll}
+						Logging...
+					{:else if checkedCount === 0}
+						Select foods to log
+					{:else}
+						Log {checkedCount} item{checkedCount === 1 ? '' : 's'}
+					{/if}
+				</button>
+			</div>
 		</div>
 	{/if}
 
