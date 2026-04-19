@@ -9,7 +9,6 @@
 		createFood,
 		createLogEntry,
 		getRecentFoods,
-		getFrequentFoods,
 		getLastServings
 	} from '$lib/db/queries';
 	import { scanLabel } from '$lib/llm/client';
@@ -27,7 +26,7 @@
 	}
 
 	// ── Shared state ────────────────────────────────────────────────────
-	type Tab = 'search' | 'quick' | 'recent' | 'scan';
+	type Tab = 'search' | 'recent' | 'scan';
 	let tab = $state<Tab>('search');
 
 	async function log(food: Food, qty: number, nav = true) {
@@ -45,58 +44,6 @@
 			logged_at: appState.selectedDate + ' 12:00:00'
 		});
 		if (nav) goto(`${base}/`);
-	}
-
-	// ── Quick Add ───────────────────────────────────────────────────────
-	let qaFilter = $state('');
-	let qaList = $state<Food[]>([]);
-	let qaSelected = $state<Record<string, number>>({});
-	let qaLogging = $state(false);
-
-	$effect(() => {
-		if (tab !== 'quick') return;
-		if (qaFilter.length >= 1) {
-			qaList = getFoods(qaFilter);
-		} else if (appState.userId) {
-			const r = getRecentFoods(appState.userId, 30);
-			const rIds = new Set(r.map((f) => f.id));
-			const f = getFrequentFoods(appState.userId, 20).filter((x) => !rIds.has(x.id));
-			qaList = [...r, ...f];
-			if (qaList.length === 0) qaList = getFoods();
-		} else {
-			qaList = getFoods();
-		}
-	});
-
-	function qaToggle(food: Food) {
-		if (food.id in qaSelected) {
-			const { [food.id]: _, ...rest } = qaSelected;
-			qaSelected = rest;
-		} else {
-			qaSelected = { ...qaSelected, [food.id]: 1 };
-		}
-	}
-
-	function qaSetQty(id: string, v: number) {
-		qaSelected = { ...qaSelected, [id]: Math.max(0.1, v) };
-	}
-
-	let qaIds = $derived(Object.keys(qaSelected));
-	let qaCount = $derived(qaIds.length);
-	let qaCal = $derived(
-		qaIds.reduce((s, id) => {
-			const f = qaList.find((x) => x.id === id);
-			return s + (f ? Math.round(f.calories * (qaSelected[id] ?? 1)) : 0);
-		}, 0)
-	);
-
-	async function qaLogAll() {
-		qaLogging = true;
-		for (const id of qaIds) {
-			const f = qaList.find((x) => x.id === id);
-			if (f) await log(f, qaSelected[id] ?? 1, false);
-		}
-		goto(`${base}/`);
 	}
 
 	// ── Recent ──────────────────────────────────────────────────────────
@@ -197,7 +144,6 @@
 	const tabs: { id: Tab; label: string }[] = [
 		{ id: 'search', label: 'Search' },
 		{ id: 'scan', label: 'Scan' },
-		{ id: 'quick', label: 'Quick Add' },
 		{ id: 'recent', label: 'Recent' }
 	];
 
@@ -240,75 +186,7 @@
 		{/each}
 	</div>
 
-	<!-- ════════════════════════════════════════════════════════════════ -->
-	<!-- QUICK ADD                                                      -->
-	<!-- ════════════════════════════════════════════════════════════════ -->
-	{#if tab === 'quick'}
-		<div class="space-y-3">
-			<input type="text" bind:value={qaFilter} placeholder="Filter foods..."
-				class="w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white" />
 
-			{#if qaCount > 0}
-				<div class="flex items-center justify-between">
-					<p class="text-sm text-gray-600 dark:text-gray-400">{qaCount} selected</p>
-					<button type="button" onclick={() => { qaSelected = {}; }} class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">Clear</button>
-				</div>
-			{:else}
-				<p class="text-xs text-gray-500 dark:text-gray-400">Tap items to select, then log them all at once.</p>
-			{/if}
-
-			{#if qaList.length > 0}
-				<ul class="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white dark:divide-gray-700 dark:border-gray-700 dark:bg-gray-800">
-					{#each qaList as food (food.id)}
-						{@const on = food.id in qaSelected}
-						{@const qty = qaSelected[food.id] ?? 1}
-						<li>
-							<button type="button" onclick={() => qaToggle(food)} class={on ? rowOn : rowOff}>
-								<div class="flex items-center gap-3 min-w-0 flex-1">
-									{#if on}
-										<svg class={check} fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
-									{:else}
-										<div class={spacer}></div>
-									{/if}
-									<div class="min-w-0">
-										<p class="text-sm font-medium text-gray-900 dark:text-white truncate">{food.name}</p>
-										{#if food.brand}<p class="text-xs text-gray-500 dark:text-gray-400 truncate">{food.brand}</p>{/if}
-									</div>
-								</div>
-								<div class="shrink-0 text-right ml-2">
-									<span class="text-xs text-gray-400">{Math.round(food.calories * qty)} cal</span>
-									<p class="text-xs text-gray-400">{qty} serving{qty !== 1 ? 's' : ''}</p>
-								</div>
-							</button>
-						</li>
-						{#if on}
-							<li class="flex items-center gap-2 px-4 py-2 bg-emerald-50/50 dark:bg-emerald-900/10">
-								<span class="text-xs text-gray-600 dark:text-gray-400">Servings</span>
-								<input type="number" step="0.1" min="0.1" value={qty}
-									oninput={(e) => qaSetQty(food.id, Number((e.target as HTMLInputElement).value))}
-									class="w-16 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1 text-sm text-gray-900 dark:text-white" />
-								<span class="text-xs text-gray-500 dark:text-gray-400">= {Math.round(food.calories * qty)} cal</span>
-							</li>
-						{/if}
-					{/each}
-				</ul>
-			{:else}
-				<p class="py-8 text-center text-sm text-gray-400 dark:text-gray-500">No foods yet. Add some via the Foods tab.</p>
-			{/if}
-
-			<div class={pill}>
-				{#if qaCount > 0}
-					<div class="flex items-center justify-between text-white text-sm mb-2">
-						<span>{qaCount} item{qaCount === 1 ? '' : 's'}</span>
-						<span class="font-bold">{qaCal} cal</span>
-					</div>
-				{/if}
-				<button type="button" onclick={qaLogAll} disabled={qaLogging || qaCount === 0} class={logBtn}>
-					{qaLogging ? 'Logging...' : qaCount === 0 ? 'Select foods to log' : `Log ${qaCount} item${qaCount === 1 ? '' : 's'}`}
-				</button>
-			</div>
-		</div>
-	{/if}
 
 	<!-- ════════════════════════════════════════════════════════════════ -->
 	<!-- RECENT                                                         -->
