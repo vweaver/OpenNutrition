@@ -4,7 +4,14 @@
 	import { base } from '$app/paths';
 	import { appState } from '$lib/stores/app.svelte';
 	import { llmState } from '$lib/stores/llm.svelte';
-	import { getFoods, createFood, createLogEntry, getRecentFoods, getFrequentFoods, getLastServings, getFoodById } from '$lib/db/queries';
+	import {
+		getFoods,
+		createFood,
+		createLogEntry,
+		getRecentFoods,
+		getFrequentFoods,
+		getLastServings
+	} from '$lib/db/queries';
 	import { scanLabel } from '$lib/llm/client';
 	import { formatDate } from '$lib/utils/dates';
 	import type { Food } from '$lib/db/types';
@@ -12,51 +19,22 @@
 	import NutritionForm from '$lib/components/NutritionForm.svelte';
 	import CameraCapture from '$lib/components/CameraCapture.svelte';
 
-	type Tab = 'search' | 'scan' | 'quick' | 'recent';
-
-	// URL params
-	let mealType = $derived(page.url.searchParams.get('meal') ?? 'snack');
-
-	// Sync date from URL param if present (covers full-page navigations)
+	// ── URL params ──────────────────────────────────────────────────────
+	const meal = page.url.searchParams.get('meal') ?? 'snack';
 	const urlDate = page.url.searchParams.get('date');
 	if (urlDate && /^\d{4}-\d{2}-\d{2}$/.test(urlDate)) {
 		appState.selectedDate = urlDate;
 	}
 
-	// Tab state
-	let activeTab = $state<Tab>('search');
+	// ── Shared state ────────────────────────────────────────────────────
+	type Tab = 'quick' | 'recent' | 'search' | 'scan';
+	let tab = $state<Tab>('quick');
 
-	// ---------------------------------------------------------------------------
-	// Search tab
-	// ---------------------------------------------------------------------------
-	let searchQuery = $state('');
-	let searchResults = $state<Food[]>([]);
-	let selectedFood = $state<Food | null>(null);
-	let servingQty = $state(1.0);
-
-	$effect(() => {
-		if (searchQuery.length >= 2) {
-			searchResults = getFoods(searchQuery);
-		} else {
-			searchResults = [];
-		}
-	});
-
-	function selectFood(food: Food) {
-		selectedFood = food;
-		servingQty = 1.0;
-	}
-
-	function clearSelection() {
-		selectedFood = null;
-		servingQty = 1.0;
-	}
-
-	async function logFood(food: Food, qty: number, navigate = true) {
+	async function log(food: Food, qty: number, nav = true) {
 		await createLogEntry({
 			user_id: appState.userId,
 			food_id: food.id,
-			meal_type: mealType,
+			meal_type: meal,
 			serving_quantity: qty,
 			serving_size_g: food.serving_size_g,
 			serving_unit: food.serving_unit,
@@ -66,313 +44,400 @@
 			fat_g: Math.round(food.fat_g * qty * 10) / 10,
 			logged_at: appState.selectedDate + ' 12:00:00'
 		});
-		if (navigate) goto(`${base}/`);
+		if (nav) goto(`${base}/`);
 	}
 
-	// ---------------------------------------------------------------------------
-	// Scan tab
-	// ---------------------------------------------------------------------------
-	let showCamera = $state(false);
-	let scanResult = $state<NutritionData | null>(null);
-	let scanNullFields = $state<string[]>([]);
-	let scanError = $state<string | null>(null);
+	// ── Quick Add ───────────────────────────────────────────────────────
+	let qaFilter = $state('');
+	let qaList = $state<Food[]>([]);
+	let qaSelected = $state<Record<string, number>>({});
+	let qaLogging = $state(false);
 
-	async function handleCapture(base64: string) {
-		showCamera = false;
+	$effect(() => {
+		if (tab !== 'quick') return;
+		if (qaFilter.length >= 1) {
+			qaList = getFoods(qaFilter);
+		} else if (appState.userId) {
+			const r = getRecentFoods(appState.userId, 30);
+			const rIds = new Set(r.map((f) => f.id));
+			const f = getFrequentFoods(appState.userId, 20).filter((x) => !rIds.has(x.id));
+			qaList = [...r, ...f];
+			if (qaList.length === 0) qaList = getFoods();
+		} else {
+			qaList = getFoods();
+		}
+	});
+
+	function qaToggle(food: Food) {
+		const copy = { ...qaSelected };
+		if (food.id in copy) {
+			delete copy[food.id];
+		} else {
+			copy[food.id] = 1;
+		}
+		qaSelected = copy;
+	}
+
+	function qaSetQty(id: string, v: number) {
+		qaSelected = { ...qaSelected, [id]: Math.max(0.1, v) };
+	}
+
+	let qaIds = $derived(Object.keys(qaSelected));
+	let qaCount = $derived(qaIds.length);
+	let qaCal = $derived(
+		qaIds.reduce((s, id) => {
+			const f = qaList.find((x) => x.id === id);
+			return s + (f ? Math.round(f.calories * (qaSelected[id] ?? 1)) : 0);
+		}, 0)
+	);
+
+	async function qaLogAll() {
+		qaLogging = true;
+		for (const id of qaIds) {
+			const f = qaList.find((x) => x.id === id);
+			if (f) await log(f, qaSelected[id] ?? 1, false);
+		}
+		goto(`${base}/`);
+	}
+
+	// ── Recent ──────────────────────────────────────────────────────────
+	let rcList = $state<Food[]>([]);
+	let rcLast = $state<Record<string, number>>({});
+	let rcSelected = $state<Record<string, number>>({});
+	let rcLogging = $state(false);
+
+	$effect(() => {
+		if (tab !== 'recent' || !appState.userId) return;
+		rcList = getRecentFoods(appState.userId, 30);
+		rcLast = getLastServings(appState.userId);
+	});
+
+	function rcToggle(food: Food) {
+		const copy = { ...rcSelected };
+		if (food.id in copy) {
+			delete copy[food.id];
+		} else {
+			copy[food.id] = rcLast[food.id] ?? 1;
+		}
+		rcSelected = copy;
+	}
+
+	let rcIds = $derived(Object.keys(rcSelected));
+	let rcCount = $derived(rcIds.length);
+	let rcCal = $derived(
+		rcIds.reduce((s, id) => {
+			const f = rcList.find((x) => x.id === id);
+			return s + (f ? Math.round(f.calories * (rcSelected[id] ?? 1)) : 0);
+		}, 0)
+	);
+
+	async function rcLogAll() {
+		rcLogging = true;
+		for (const id of rcIds) {
+			const f = rcList.find((x) => x.id === id);
+			if (f) await log(f, rcSelected[id] ?? 1, false);
+		}
+		goto(`${base}/`);
+	}
+
+	// ── Search ──────────────────────────────────────────────────────────
+	let srQuery = $state('');
+	let srResults = $state<Food[]>([]);
+	let srFood = $state<Food | null>(null);
+	let srQty = $state(1.0);
+
+	$effect(() => {
+		if (srQuery.length >= 2) {
+			srResults = getFoods(srQuery);
+		} else {
+			srResults = [];
+		}
+	});
+
+	// ── Scan ────────────────────────────────────────────────────────────
+	let camOpen = $state(false);
+	let scanData = $state<NutritionData | null>(null);
+	let scanNulls = $state<string[]>([]);
+	let scanErr = $state<string | null>(null);
+
+	async function onCapture(b64: string) {
+		camOpen = false;
 		llmState.scanning = true;
-		llmState.error = null;
-		scanError = null;
-
+		scanErr = null;
 		try {
-			const result = await scanLabel(llmState.config, base64);
-			// Track which fields came back null from the LLM
-			scanNullFields = Object.entries(result)
-				.filter(([, v]) => v === null)
-				.map(([k]) => k);
-			scanResult = result;
-		} catch (err) {
-			const msg = err instanceof Error ? err.message : String(err);
-			scanError = msg;
-			llmState.error = msg;
+			const r = await scanLabel(llmState.config, b64);
+			scanNulls = Object.entries(r).filter(([, v]) => v === null).map(([k]) => k);
+			scanData = r;
+		} catch (e) {
+			scanErr = e instanceof Error ? e.message : String(e);
 		} finally {
 			llmState.scanning = false;
 		}
 	}
 
-	async function saveAndLogScan() {
-		if (!scanResult) return;
-
-		const food = await createFood({
-			name: scanResult.product_name ?? 'Scanned Food',
-			brand: scanResult.brand,
-			serving_size_g: scanResult.serving_size_g ?? 100,
-			serving_unit: scanResult.serving_size_text ?? 'serving',
-			calories: scanResult.calories,
-			protein_g: scanResult.protein_g ?? 0,
-			carbs_g: scanResult.total_carbohydrate_g ?? 0,
-			fat_g: scanResult.total_fat_g ?? 0,
-			fiber_g: scanResult.dietary_fiber_g ?? null,
-			sugar_g: scanResult.total_sugars_g ?? null,
-			sodium_mg: scanResult.sodium_mg ?? null,
-			barcode: scanResult.barcode,
+	async function saveScan() {
+		if (!scanData) return;
+		const f = await createFood({
+			name: scanData.product_name ?? 'Scanned Food',
+			brand: scanData.brand,
+			serving_size_g: scanData.serving_size_g ?? 100,
+			serving_unit: scanData.serving_size_text ?? 'serving',
+			calories: scanData.calories,
+			protein_g: scanData.protein_g ?? 0,
+			carbs_g: scanData.total_carbohydrate_g ?? 0,
+			fat_g: scanData.total_fat_g ?? 0,
+			fiber_g: scanData.dietary_fiber_g ?? null,
+			sugar_g: scanData.total_sugars_g ?? null,
+			sodium_mg: scanData.sodium_mg ?? null,
+			barcode: scanData.barcode,
 			source: 'scan'
 		});
-
-		await logFood(food, 1.0);
+		await log(f, 1.0);
 	}
 
-	// ---------------------------------------------------------------------------
-	// Quick Add tab — multi-select from food library
-	// ---------------------------------------------------------------------------
-	let quickSearch = $state('');
-	let quickFoods = $state<Food[]>([]);
-	let checkedFoods = $state<Record<string, number>>({});
-	let loggingAll = $state(false);
-
-	$effect(() => {
-		if (activeTab !== 'quick') return;
-		if (quickSearch.length >= 1) {
-			quickFoods = getFoods(quickSearch);
-		} else if (appState.userId) {
-			const recent = getRecentFoods(appState.userId, 30);
-			const recentIds = new Set(recent.map((f) => f.id));
-			const frequent = getFrequentFoods(appState.userId, 20).filter((f) => !recentIds.has(f.id));
-			quickFoods = [...recent, ...frequent];
-			if (quickFoods.length === 0) quickFoods = getFoods();
-		} else {
-			quickFoods = getFoods();
-		}
-	});
-
-	let checkedIds = $derived(Object.keys(checkedFoods));
-	let checkedCount = $derived(checkedIds.length);
-
-	function toggleCheck(food: Food) {
-		if (food.id in checkedFoods) {
-			const { [food.id]: _, ...rest } = checkedFoods;
-			checkedFoods = rest;
-		} else {
-			checkedFoods = { ...checkedFoods, [food.id]: 1 };
-		}
-	}
-
-	function setCheckServings(foodId: string, qty: number) {
-		checkedFoods = { ...checkedFoods, [foodId]: Math.max(0.1, qty) };
-	}
-
-	let checkedCalories = $derived(
-		checkedIds.reduce((sum, id) => {
-			const food = quickFoods.find((f) => f.id === id);
-			return sum + (food ? Math.round(food.calories * (checkedFoods[id] ?? 1)) : 0);
-		}, 0)
-	);
-
-	async function logAllChecked() {
-		if (checkedCount === 0) return;
-		loggingAll = true;
-		for (const id of checkedIds) {
-			const food = quickFoods.find((f) => f.id === id);
-			if (food) await logFood(food, checkedFoods[id] ?? 1, false);
-		}
-		goto(`${base}/`);
-	}
-
-	// ---------------------------------------------------------------------------
-	// Recent tab — tap to check, log button at bottom
-	// ---------------------------------------------------------------------------
-	let recentFoods = $state<Food[]>([]);
-	let lastServings = $state<Record<string, number>>({});
-	let recentChecked = $state<Record<string, number>>({});
-	let recentLogging = $state(false);
-
-	let recentCheckedIds = $derived(Object.keys(recentChecked));
-	let recentCheckedCount = $derived(recentCheckedIds.length);
-
-	$effect(() => {
-		if (activeTab === 'recent' && appState.userId) {
-			recentFoods = getRecentFoods(appState.userId, 30);
-			lastServings = getLastServings(appState.userId);
-		}
-	});
-
-	let recentCalories = $derived(
-		recentCheckedIds.reduce((sum, id) => {
-			const food = recentFoods.find((f) => f.id === id);
-			return sum + (food ? Math.round(food.calories * (recentChecked[id] ?? 1)) : 0);
-		}, 0)
-	);
-
-	function toggleRecentCheck(food: Food) {
-		if (food.id in recentChecked) {
-			const { [food.id]: _, ...rest } = recentChecked;
-			recentChecked = rest;
-		} else {
-			recentChecked = { ...recentChecked, [food.id]: lastServings[food.id] ?? 1 };
-		}
-	}
-
-	async function logAllRecent() {
-		if (recentCheckedCount === 0) return;
-		recentLogging = true;
-		for (const id of recentCheckedIds) {
-			const food = recentFoods.find((f) => f.id === id);
-			if (food) await logFood(food, recentChecked[id] ?? 1, false);
-		}
-		goto(`${base}/`);
-	}
-
-	function clearRecentSelection() {
-		recentChecked = {};
-	}
-
-	// Tab definitions
+	// ── Tab config ──────────────────────────────────────────────────────
 	const tabs: { id: Tab; label: string }[] = [
-		{ id: 'search', label: 'Search' },
-		{ id: 'scan', label: 'Scan Label' },
 		{ id: 'quick', label: 'Quick Add' },
-		{ id: 'recent', label: 'Recent' }
+		{ id: 'recent', label: 'Recent' },
+		{ id: 'search', label: 'Search' },
+		{ id: 'scan', label: 'Scan' }
 	];
+
+	// ── Styles ──────────────────────────────────────────────────────────
+	const row = 'flex w-full items-center justify-between px-4 py-3 text-left select-none transition-colors';
+	const rowOn = row + ' bg-emerald-50 dark:bg-emerald-900/20';
+	const rowOff = row + ' hover:bg-gray-50 dark:hover:bg-gray-700';
+	const check = 'shrink-0 h-5 w-5 text-emerald-500';
+	const spacer = 'shrink-0 h-5 w-5';
+	const pill = 'rounded-xl bg-emerald-600 p-3 shadow-lg';
+	const logBtn = 'w-full rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors';
 </script>
 
 <div class="mx-auto max-w-lg px-4 py-6">
+
 	<!-- Header -->
 	<div class="mb-6 flex items-center justify-between">
 		<div>
 			<h1 class="text-xl font-bold text-gray-900 dark:text-white">Log Food</h1>
-			<p class="text-sm text-gray-500 dark:text-gray-400 capitalize">{mealType} &middot; {formatDate(appState.selectedDate)}</p>
+			<p class="text-sm text-gray-500 dark:text-gray-400 capitalize">
+				{meal} &middot; {formatDate(appState.selectedDate)}
+			</p>
 		</div>
-		<a
-			href="{base}/"
-			class="rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700 transition-colors"
-		>
-			Cancel
+		<a href="{base}/" class="rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-600 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-300 dark:hover:bg-gray-700">
+			Back
 		</a>
 	</div>
 
-	<!-- Tabs -->
+	<!-- Tab bar -->
 	<div class="mb-6 flex gap-1 rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
-		{#each tabs as tab}
+		{#each tabs as t}
 			<button
-				onclick={() => activeTab = tab.id}
-				class="flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors {activeTab === tab.id
-					? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
-					: 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}"
-			>
-				{tab.label}
-			</button>
+				type="button"
+				onclick={() => { tab = t.id; }}
+				class="flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors
+					{tab === t.id
+						? 'bg-white text-gray-900 shadow-sm dark:bg-gray-700 dark:text-white'
+						: 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}"
+			>{t.label}</button>
 		{/each}
 	</div>
 
-	<!-- Search Tab -->
-	{#if activeTab === 'search'}
+	<!-- ════════════════════════════════════════════════════════════════ -->
+	<!-- QUICK ADD                                                      -->
+	<!-- ════════════════════════════════════════════════════════════════ -->
+	{#if tab === 'quick'}
+		<div class="space-y-3">
+			<input type="text" bind:value={qaFilter} placeholder="Filter foods..."
+				class="w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white" />
+
+			{#if qaCount > 0}
+				<div class="flex items-center justify-between">
+					<p class="text-sm text-gray-600 dark:text-gray-400">{qaCount} selected</p>
+					<button type="button" onclick={() => { qaSelected = {}; }} class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">Clear</button>
+				</div>
+			{:else}
+				<p class="text-xs text-gray-500 dark:text-gray-400">Tap items to select, then log them all at once.</p>
+			{/if}
+
+			{#if qaList.length > 0}
+				<ul class="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white dark:divide-gray-700 dark:border-gray-700 dark:bg-gray-800">
+					{#each qaList as food (food.id)}
+						{@const on = food.id in qaSelected}
+						{@const qty = qaSelected[food.id] ?? 1}
+						<li>
+							<button type="button" onclick={() => qaToggle(food)} class={on ? rowOn : rowOff}>
+								<div class="flex items-center gap-3 min-w-0 flex-1">
+									{#if on}
+										<svg class={check} fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+									{:else}
+										<div class={spacer}></div>
+									{/if}
+									<div class="min-w-0">
+										<p class="text-sm font-medium text-gray-900 dark:text-white truncate">{food.name}</p>
+										{#if food.brand}<p class="text-xs text-gray-500 dark:text-gray-400 truncate">{food.brand}</p>{/if}
+									</div>
+								</div>
+								<div class="shrink-0 text-right ml-2">
+									<span class="text-xs text-gray-400">{Math.round(food.calories * qty)} cal</span>
+									<p class="text-xs text-gray-400">{qty} serving{qty !== 1 ? 's' : ''}</p>
+								</div>
+							</button>
+						</li>
+						{#if on}
+							<li class="flex items-center gap-2 px-4 py-2 bg-emerald-50/50 dark:bg-emerald-900/10">
+								<span class="text-xs text-gray-600 dark:text-gray-400">Servings</span>
+								<input type="number" step="0.1" min="0.1" value={qty}
+									oninput={(e) => qaSetQty(food.id, Number((e.target as HTMLInputElement).value))}
+									class="w-16 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1 text-sm text-gray-900 dark:text-white" />
+								<span class="text-xs text-gray-500 dark:text-gray-400">= {Math.round(food.calories * qty)} cal</span>
+							</li>
+						{/if}
+					{/each}
+				</ul>
+			{:else}
+				<p class="py-8 text-center text-sm text-gray-400 dark:text-gray-500">No foods yet. Add some via the Foods tab.</p>
+			{/if}
+
+			<div class={pill}>
+				{#if qaCount > 0}
+					<div class="flex items-center justify-between text-white text-sm mb-2">
+						<span>{qaCount} item{qaCount === 1 ? '' : 's'}</span>
+						<span class="font-bold">{qaCal} cal</span>
+					</div>
+				{/if}
+				<button type="button" onclick={qaLogAll} disabled={qaLogging || qaCount === 0} class={logBtn}>
+					{qaLogging ? 'Logging...' : qaCount === 0 ? 'Select foods to log' : `Log ${qaCount} item${qaCount === 1 ? '' : 's'}`}
+				</button>
+			</div>
+		</div>
+	{/if}
+
+	<!-- ════════════════════════════════════════════════════════════════ -->
+	<!-- RECENT                                                         -->
+	<!-- ════════════════════════════════════════════════════════════════ -->
+	{#if tab === 'recent'}
+		<div class="space-y-3">
+			{#if rcCount > 0}
+				<div class="flex items-center justify-between">
+					<p class="text-sm text-gray-600 dark:text-gray-400">{rcCount} selected</p>
+					<button type="button" onclick={() => { rcSelected = {}; }} class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">Clear</button>
+				</div>
+			{:else}
+				<p class="text-xs text-gray-500 dark:text-gray-400">Tap items to select, then log them all at once.</p>
+			{/if}
+
+			{#if rcList.length > 0}
+				<ul class="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white dark:divide-gray-700 dark:border-gray-700 dark:bg-gray-800">
+					{#each rcList as food (food.id)}
+						{@const on = food.id in rcSelected}
+						{@const qty = rcSelected[food.id] ?? rcLast[food.id] ?? 1}
+						<li>
+							<button type="button" onclick={() => rcToggle(food)} class={on ? rowOn : rowOff}>
+								<div class="flex items-center gap-3 min-w-0 flex-1">
+									{#if on}
+										<svg class={check} fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg>
+									{:else}
+										<div class={spacer}></div>
+									{/if}
+									<div class="min-w-0">
+										<p class="text-sm font-medium text-gray-900 dark:text-white truncate">{food.name}</p>
+										{#if food.brand}<p class="text-xs text-gray-500 dark:text-gray-400 truncate">{food.brand}</p>{/if}
+									</div>
+								</div>
+								<div class="shrink-0 text-right ml-2">
+									<span class="text-xs text-gray-400">{Math.round(food.calories * qty)} cal</span>
+									<p class="text-xs text-gray-400">{qty} serving{qty !== 1 ? 's' : ''}</p>
+								</div>
+							</button>
+						</li>
+					{/each}
+				</ul>
+			{:else}
+				<p class="py-8 text-center text-sm text-gray-400 dark:text-gray-500">No recent foods yet.</p>
+			{/if}
+
+			<div class={pill}>
+				{#if rcCount > 0}
+					<div class="flex items-center justify-between text-white text-sm mb-2">
+						<span>{rcCount} item{rcCount === 1 ? '' : 's'}</span>
+						<span class="font-bold">{rcCal} cal</span>
+					</div>
+				{/if}
+				<button type="button" onclick={rcLogAll} disabled={rcLogging || rcCount === 0} class={logBtn}>
+					{rcLogging ? 'Logging...' : rcCount === 0 ? 'Select foods to log' : `Log ${rcCount} item${rcCount === 1 ? '' : 's'}`}
+				</button>
+			</div>
+		</div>
+	{/if}
+
+	<!-- ════════════════════════════════════════════════════════════════ -->
+	<!-- SEARCH                                                         -->
+	<!-- ════════════════════════════════════════════════════════════════ -->
+	{#if tab === 'search'}
 		<div class="space-y-4">
-			{#if !selectedFood}
-				<input
-					type="text"
-					placeholder="Search foods by name or brand..."
-					bind:value={searchQuery}
-					class="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-				/>
-				{#if searchResults.length > 0}
+			{#if !srFood}
+				<input type="text" placeholder="Search foods by name or brand..." bind:value={srQuery}
+					class="w-full rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white" />
+				{#if srResults.length > 0}
 					<ul class="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white dark:divide-gray-700 dark:border-gray-700 dark:bg-gray-800">
-						{#each searchResults as food}
+						{#each srResults as food}
 							<li>
-								<button
-									onclick={() => selectFood(food)}
-									class="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-								>
+								<button type="button" onclick={() => { srFood = food; srQty = 1; }}
+									class="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
 									<div>
 										<p class="text-sm font-medium text-gray-900 dark:text-white">{food.name}</p>
-										{#if food.brand}
-											<p class="text-xs text-gray-500 dark:text-gray-400">{food.brand}</p>
-										{/if}
+										{#if food.brand}<p class="text-xs text-gray-500 dark:text-gray-400">{food.brand}</p>{/if}
 									</div>
-									<span class="text-xs text-gray-400 dark:text-gray-500">{food.calories} cal</span>
+									<span class="text-xs text-gray-400">{food.calories} cal</span>
 								</button>
 							</li>
 						{/each}
 					</ul>
-				{:else if searchQuery.length >= 2}
+				{:else if srQuery.length >= 2}
 					<p class="py-8 text-center text-sm text-gray-400 dark:text-gray-500">No foods found.</p>
 				{/if}
 			{:else}
-				<!-- Serving selector -->
 				<div class="rounded-xl border border-gray-200 bg-white p-4 dark:border-gray-700 dark:bg-gray-800">
 					<div class="mb-4 flex items-center justify-between">
 						<div>
-							<p class="font-medium text-gray-900 dark:text-white">{selectedFood.name}</p>
-							{#if selectedFood.brand}
-								<p class="text-sm text-gray-500 dark:text-gray-400">{selectedFood.brand}</p>
-							{/if}
+							<p class="font-medium text-gray-900 dark:text-white">{srFood.name}</p>
+							{#if srFood.brand}<p class="text-sm text-gray-500 dark:text-gray-400">{srFood.brand}</p>{/if}
 						</div>
-						<button onclick={clearSelection} class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-							Change
-						</button>
+						<button type="button" onclick={() => { srFood = null; }} class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">Change</button>
 					</div>
 					<div class="mb-4">
-						<label for="search-serving" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
-							Servings ({selectedFood.serving_unit})
-						</label>
-						<input
-							id="search-serving"
-							type="number"
-							step="0.1"
-							min="0.1"
-							bind:value={servingQty}
-							class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-						/>
+						<label for="sr-qty" class="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">Servings ({srFood.serving_unit})</label>
+						<input id="sr-qty" type="number" step="0.1" min="0.1" bind:value={srQty}
+							class="w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-white focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500" />
 					</div>
 					<div class="mb-4 grid grid-cols-4 gap-2 text-center text-xs text-gray-500 dark:text-gray-400">
-						<div>
-							<p class="text-lg font-bold text-gray-900 dark:text-white">{Math.round(selectedFood.calories * servingQty)}</p>
-							<p>cal</p>
-						</div>
-						<div>
-							<p class="text-lg font-bold text-gray-900 dark:text-white">{(selectedFood.protein_g * servingQty).toFixed(1)}</p>
-							<p>protein</p>
-						</div>
-						<div>
-							<p class="text-lg font-bold text-gray-900 dark:text-white">{(selectedFood.carbs_g * servingQty).toFixed(1)}</p>
-							<p>carbs</p>
-						</div>
-						<div>
-							<p class="text-lg font-bold text-gray-900 dark:text-white">{(selectedFood.fat_g * servingQty).toFixed(1)}</p>
-							<p>fat</p>
-						</div>
+						<div><p class="text-lg font-bold text-gray-900 dark:text-white">{Math.round(srFood.calories * srQty)}</p><p>cal</p></div>
+						<div><p class="text-lg font-bold text-gray-900 dark:text-white">{(srFood.protein_g * srQty).toFixed(1)}</p><p>protein</p></div>
+						<div><p class="text-lg font-bold text-gray-900 dark:text-white">{(srFood.carbs_g * srQty).toFixed(1)}</p><p>carbs</p></div>
+						<div><p class="text-lg font-bold text-gray-900 dark:text-white">{(srFood.fat_g * srQty).toFixed(1)}</p><p>fat</p></div>
 					</div>
-					<button
-						onclick={() => logFood(selectedFood!, servingQty)}
-						class="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors"
-					>
-						Log
-					</button>
+					<button type="button" onclick={() => log(srFood!, srQty)} class="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors">Log</button>
 				</div>
 			{/if}
 		</div>
 	{/if}
 
-	<!-- Scan Label Tab -->
-	{#if activeTab === 'scan'}
+	<!-- ════════════════════════════════════════════════════════════════ -->
+	<!-- SCAN                                                           -->
+	<!-- ════════════════════════════════════════════════════════════════ -->
+	{#if tab === 'scan'}
 		<div class="space-y-4">
 			{#if llmState.scanning}
-				<!-- Loading spinner -->
-				<div class="flex flex-col items-center justify-center gap-3 py-16">
+				<div class="flex flex-col items-center gap-3 py-16">
 					<div class="h-10 w-10 animate-spin rounded-full border-4 border-gray-200 border-t-emerald-600 dark:border-gray-700 dark:border-t-emerald-400"></div>
 					<p class="text-sm text-gray-500 dark:text-gray-400">Scanning nutrition label...</p>
 				</div>
-			{:else if scanResult}
-				<!-- Editable nutrition form -->
-				<NutritionForm bind:data={scanResult} nullFields={scanNullFields} />
-				<button
-					onclick={saveAndLogScan}
-					class="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors"
-				>
-					Save & Log
-				</button>
-			{:else if showCamera}
-				<CameraCapture oncapture={handleCapture} onclose={() => (showCamera = false)} />
+			{:else if scanData}
+				<NutritionForm bind:data={scanData} nullFields={scanNulls} />
+				<button type="button" onclick={saveScan} class="w-full rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors">Save & Log</button>
+			{:else if camOpen}
+				<CameraCapture oncapture={onCapture} onclose={() => { camOpen = false; }} />
 			{:else}
-				<!-- Initial state: prompt to open camera -->
 				<div class="flex flex-col items-center gap-4 py-12">
 					<div class="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100 dark:bg-emerald-900/30">
 						<svg class="h-8 w-8 text-emerald-600 dark:text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -381,194 +446,13 @@
 						</svg>
 					</div>
 					<p class="text-sm text-gray-600 dark:text-gray-300">Take a photo of a nutrition label</p>
-					<button
-						onclick={() => (showCamera = true)}
-						class="rounded-xl bg-emerald-600 px-6 py-3 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors"
-					>
-						Open Camera
-					</button>
+					<button type="button" onclick={() => { camOpen = true; }} class="rounded-xl bg-emerald-600 px-6 py-3 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors">Open Camera</button>
 				</div>
-				{#if scanError}
-					<div class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">
-						{scanError}
-					</div>
+				{#if scanErr}
+					<div class="rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/20 dark:text-red-400">{scanErr}</div>
 				{/if}
 			{/if}
 		</div>
 	{/if}
 
-	<!-- Quick Add Tab -->
-	{#if activeTab === 'quick'}
-		<div class="space-y-3">
-			<input
-				type="text"
-				bind:value={quickSearch}
-				placeholder="Filter foods..."
-				class="w-full rounded-xl border border-gray-300 bg-white px-4 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
-			/>
-
-			{#if checkedCount > 0}
-				<div class="flex items-center justify-between">
-					<p class="text-sm text-gray-600 dark:text-gray-400">{checkedCount} selected</p>
-					<button onclick={() => { checkedFoods = {}; }} class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">Clear</button>
-				</div>
-			{:else}
-				<p class="text-xs text-gray-500 dark:text-gray-400">Tap items to select, then log them all at once.</p>
-			{/if}
-
-			{#if quickFoods.length > 0}
-				<ul class="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white dark:divide-gray-700 dark:border-gray-700 dark:bg-gray-800">
-					{#each quickFoods as food (food.id)}
-						{@const isChecked = food.id in checkedFoods}
-						{@const qty = checkedFoods[food.id] ?? 1}
-						<li>
-							<button
-								onclick={() => toggleCheck(food)}
-								class="flex w-full items-center justify-between px-4 py-3 text-left select-none transition-colors
-									{isChecked ? 'bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-gray-50 dark:hover:bg-gray-700'}"
-							>
-								<div class="flex items-center gap-3 min-w-0 flex-1">
-									{#if isChecked}
-										<svg class="shrink-0 h-5 w-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-											<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-										</svg>
-									{:else}
-										<div class="shrink-0 h-5 w-5"></div>
-									{/if}
-									<div class="min-w-0">
-										<p class="text-sm font-medium text-gray-900 dark:text-white truncate">{food.name}</p>
-										{#if food.brand}
-											<p class="text-xs text-gray-500 dark:text-gray-400 truncate">{food.brand}</p>
-										{/if}
-									</div>
-								</div>
-								<div class="shrink-0 text-right ml-2">
-									<span class="text-xs text-gray-400 dark:text-gray-500">{Math.round(food.calories * qty)} cal</span>
-									<p class="text-xs text-gray-400 dark:text-gray-500">{qty} serving{qty !== 1 ? 's' : ''}</p>
-								</div>
-							</button>
-						</li>
-						{#if isChecked}
-							<li class="flex items-center gap-2 px-4 py-2 bg-emerald-50/50 dark:bg-emerald-900/10">
-								<span class="text-xs text-gray-600 dark:text-gray-400">Servings</span>
-								<input
-									type="number"
-									step="0.1"
-									min="0.1"
-									value={qty}
-									oninput={(e) => setCheckServings(food.id, Number((e.target as HTMLInputElement).value))}
-									class="w-16 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1 text-sm text-gray-900 dark:text-white"
-								/>
-								<span class="text-xs text-gray-500 dark:text-gray-400">
-									= {Math.round(food.calories * qty)} cal
-								</span>
-							</li>
-						{/if}
-					{/each}
-				</ul>
-			{:else}
-				<p class="py-8 text-center text-sm text-gray-400 dark:text-gray-500">
-					No foods in your library yet. Add some via the Foods tab.
-				</p>
-			{/if}
-
-			<!-- Log button -->
-			<div class="rounded-xl bg-emerald-600 p-3 shadow-lg">
-				{#if checkedCount > 0}
-					<div class="flex items-center justify-between text-white text-sm mb-2">
-						<span>{checkedCount} item{checkedCount === 1 ? '' : 's'}</span>
-						<span class="font-bold">{checkedCalories} cal total</span>
-					</div>
-				{/if}
-				<button
-					onclick={logAllChecked}
-					disabled={loggingAll || checkedCount === 0}
-					class="w-full rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-				>
-					{#if loggingAll}
-						Logging...
-					{:else if checkedCount === 0}
-						Select foods to log
-					{:else}
-						Log {checkedCount} item{checkedCount === 1 ? '' : 's'}
-					{/if}
-				</button>
-			</div>
-		</div>
-	{/if}
-
-	<!-- Recent Tab -->
-	{#if activeTab === 'recent'}
-		<div class="space-y-3">
-			{#if recentCheckedCount > 0}
-				<div class="flex items-center justify-between">
-					<p class="text-sm text-gray-600 dark:text-gray-400">{recentCheckedCount} selected</p>
-					<button onclick={clearRecentSelection} class="text-sm text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">Clear</button>
-				</div>
-			{:else}
-				<p class="text-xs text-gray-500 dark:text-gray-400">Tap items to select, then log them all at once.</p>
-			{/if}
-
-			{#if recentFoods.length > 0}
-				<ul class="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white dark:divide-gray-700 dark:border-gray-700 dark:bg-gray-800">
-					{#each recentFoods as food (food.id)}
-						{@const isChecked = food.id in recentChecked}
-						{@const qty = recentChecked[food.id] ?? lastServings[food.id] ?? 1}
-						<li>
-							<button
-								onclick={() => toggleRecentCheck(food)}
-								class="flex w-full items-center justify-between px-4 py-3 text-left select-none transition-colors
-									{isChecked ? 'bg-emerald-50 dark:bg-emerald-900/20' : 'hover:bg-gray-50 dark:hover:bg-gray-700'}"
-							>
-								<div class="flex items-center gap-3 min-w-0 flex-1">
-									{#if isChecked}
-										<svg class="shrink-0 h-5 w-5 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-											<path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" />
-										</svg>
-									{:else}
-										<div class="shrink-0 h-5 w-5"></div>
-									{/if}
-									<div class="min-w-0">
-										<p class="text-sm font-medium text-gray-900 dark:text-white truncate">{food.name}</p>
-										{#if food.brand}
-											<p class="text-xs text-gray-500 dark:text-gray-400 truncate">{food.brand}</p>
-										{/if}
-									</div>
-								</div>
-								<div class="shrink-0 text-right ml-2">
-									<span class="text-xs text-gray-400 dark:text-gray-500">{Math.round(food.calories * qty)} cal</span>
-									<p class="text-xs text-gray-400 dark:text-gray-500">{qty} serving{qty !== 1 ? 's' : ''}</p>
-								</div>
-							</button>
-						</li>
-					{/each}
-				</ul>
-			{:else}
-				<p class="py-12 text-center text-sm text-gray-400 dark:text-gray-500">No recent foods yet.</p>
-			{/if}
-
-			<!-- Log button — always visible -->
-			<div class="rounded-xl bg-emerald-600 p-3 shadow-lg">
-				{#if recentCheckedCount > 0}
-					<div class="flex items-center justify-between text-white text-sm mb-2">
-						<span>{recentCheckedCount} item{recentCheckedCount === 1 ? '' : 's'}</span>
-						<span class="font-bold">{recentCalories} cal total</span>
-					</div>
-				{/if}
-				<button
-					onclick={logAllRecent}
-					disabled={recentLogging || recentCheckedCount === 0}
-					class="w-full rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-				>
-					{#if recentLogging}
-						Logging...
-					{:else if recentCheckedCount === 0}
-						Select foods to log
-					{:else}
-						Log {recentCheckedCount} item{recentCheckedCount === 1 ? '' : 's'}
-					{/if}
-				</button>
-			</div>
-		</div>
-	{/if}
 </div>
