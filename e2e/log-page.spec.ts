@@ -10,7 +10,7 @@ test('log page tabs are switchable and functional', async ({ page }) => {
 
 	// Should start on Search tab
 	const searchTab = page.getByRole('button', { name: 'Search' });
-	const scanTab = page.getByRole('button', { name: 'Scan Label' });
+	const scanTab = page.getByRole('button', { name: 'AI' });
 	const quickTab = page.getByRole('button', { name: 'Quick Add' });
 	const recentTab = page.getByRole('button', { name: 'Recent' });
 
@@ -28,7 +28,7 @@ test('log page tabs are switchable and functional', async ({ page }) => {
 	await recentTab.click();
 	await expect(page.getByText('Select foods to log')).toBeVisible();
 
-	// Switch to Scan Label — should show camera prompt
+	// Switch to AI — should show camera prompt
 	await scanTab.click();
 	await expect(page.getByText('Open Camera')).toBeVisible();
 

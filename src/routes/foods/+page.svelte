@@ -322,7 +322,7 @@
 					}
 				}}
 			>
-				{showScan ? 'Cancel' : '📷 Scan Label'}
+				{showScan ? 'Cancel' : '📷 Scan'}
 			</button>
 			<button
 				type="button"
@@ -391,7 +391,7 @@
 		</div>
 	{/if}
 
-	<!-- Scan Label Flow -->
+	<!-- Scan Flow -->
 	{#if showScan}
 		<div class="rounded-xl border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-gray-800 p-5 space-y-4">
 			<h2 class="text-lg font-semibold text-gray-900 dark:text-white">Scan Nutrition Label</h2>

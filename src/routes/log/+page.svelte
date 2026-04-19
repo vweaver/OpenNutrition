@@ -391,7 +391,7 @@
 					<button type="button" onclick={aiSubmit}
 						disabled={!aiText.trim() && !aiPhoto}
 						class="flex-1 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors">
-						{aiPhoto ? 'Scan Label' : 'Estimate'}
+						{aiPhoto ? 'Analyze' : 'Estimate'}
 					</button>
 				</div>
 
