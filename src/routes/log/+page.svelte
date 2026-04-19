@@ -397,7 +397,7 @@
 		</div>
 	{/if}
 
-	<!-- Quick Add Tab — tap to check, inline qty -->
+	<!-- Quick Add Tab -->
 	{#if activeTab === 'quick'}
 		<div class="space-y-3">
 			<input
@@ -416,14 +416,11 @@
 				<p class="text-xs text-gray-500 dark:text-gray-400">Tap items to select, then log them all at once.</p>
 			{/if}
 
-			{#if quickFoods.length === 0}
-				<p class="py-8 text-center text-sm text-gray-400 dark:text-gray-500">
-					No foods in your library yet. Add some via the Foods tab.
-				</p>
-			{:else}
-				<ul class="max-h-80 overflow-y-auto divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white dark:divide-gray-700 dark:border-gray-700 dark:bg-gray-800">
+			{#if quickFoods.length > 0}
+				<ul class="divide-y divide-gray-100 rounded-xl border border-gray-200 bg-white dark:divide-gray-700 dark:border-gray-700 dark:bg-gray-800">
 					{#each quickFoods as food (food.id)}
 						{@const isChecked = food.id in checkedFoods}
+						{@const qty = checkedFoods[food.id] ?? 1}
 						<li>
 							<button
 								onclick={() => toggleCheck(food)}
@@ -445,37 +442,41 @@
 										{/if}
 									</div>
 								</div>
-								<span class="shrink-0 text-xs text-gray-400 dark:text-gray-500 ml-2">
-									{Math.round(food.calories * (checkedFoods[food.id] ?? 1))} cal
-								</span>
-							</button>
-							{#if isChecked}
-								<div class="flex items-center gap-2 px-4 py-2 bg-emerald-50/50 dark:bg-emerald-900/10 border-t border-emerald-100 dark:border-emerald-900/30">
-									<span class="text-xs text-gray-600 dark:text-gray-400">Qty</span>
-									<input
-										type="number"
-										step="0.1"
-										min="0.1"
-										value={checkedFoods[food.id] ?? 1}
-										onclick={(e) => e.stopPropagation()}
-										oninput={(e) => setCheckServings(food.id, Number((e.target as HTMLInputElement).value))}
-										class="w-16 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1 text-sm text-gray-900 dark:text-white"
-									/>
-									<span class="text-xs text-gray-500 dark:text-gray-400">
-										= {Math.round(food.calories * (checkedFoods[food.id] ?? 1))} cal
-									</span>
+								<div class="shrink-0 text-right ml-2">
+									<span class="text-xs text-gray-400 dark:text-gray-500">{Math.round(food.calories * qty)} cal</span>
+									<p class="text-xs text-gray-400 dark:text-gray-500">{qty} serving{qty !== 1 ? 's' : ''}</p>
 								</div>
-							{/if}
+							</button>
 						</li>
+						{#if isChecked}
+							<li class="flex items-center gap-2 px-4 py-2 bg-emerald-50/50 dark:bg-emerald-900/10">
+								<span class="text-xs text-gray-600 dark:text-gray-400">Servings</span>
+								<input
+									type="number"
+									step="0.1"
+									min="0.1"
+									value={qty}
+									oninput={(e) => setCheckServings(food.id, Number((e.target as HTMLInputElement).value))}
+									class="w-16 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-2 py-1 text-sm text-gray-900 dark:text-white"
+								/>
+								<span class="text-xs text-gray-500 dark:text-gray-400">
+									= {Math.round(food.calories * qty)} cal
+								</span>
+							</li>
+						{/if}
 					{/each}
 				</ul>
+			{:else}
+				<p class="py-8 text-center text-sm text-gray-400 dark:text-gray-500">
+					No foods in your library yet. Add some via the Foods tab.
+				</p>
 			{/if}
 
 			<!-- Log button -->
 			<div class="rounded-xl bg-emerald-600 p-3 shadow-lg">
 				{#if checkedCount > 0}
 					<div class="flex items-center justify-between text-white text-sm mb-2">
-						<span>{checkedCount} item{checkedCount === 1 ? '' : 's'} selected</span>
+						<span>{checkedCount} item{checkedCount === 1 ? '' : 's'}</span>
 						<span class="font-bold">{checkedCalories} cal total</span>
 					</div>
 				{/if}
